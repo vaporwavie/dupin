@@ -1,3 +1,12 @@
 {
-   "signedContributors": []
+  "signedContributors": [
+    {
+      "name": "conao3",
+      "id": 4703128,
+      "comment_id": 7094697999,
+      "created_at": "2026-11-23T07:47:04Z",
+      "repoId": 1466747516,
+      "pullRequestNo": 166
+    }
+  ]
 }
