@@ -120,19 +120,6 @@ native.wrapApplication (
           ;
         inherit (commonArgs) cargoDeps;
         baseline = native;
-        e2eProbe = native.wrapApplication (
-          native.nativeApplication.overrideAttrs (old: {
-            postPatch = (old.postPatch or "") + ''
-              rune_sources=("$cargoDepsCopy"/source-*/rune-0.0.1/src/shortcuts/macos.rs)
-              if [ "''${#rune_sources[@]}" -ne 1 ] || [ ! -f "''${rune_sources[0]}" ]; then
-                echo "Expected exactly one vendored Rune shortcut backend" >&2
-                exit 1
-              fi
-              rune_root=$(dirname "$(dirname "$(dirname "''${rune_sources[0]}")")")
-              patch --batch --forward --fuzz=0 -p1 -d "$rune_root" < ${./patches/rune-hotkey-probe.patch}
-            '';
-          })
-        );
       };
     }
   )

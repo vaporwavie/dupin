@@ -86,10 +86,10 @@ jobs:
       # Clippy, tests, Hawk's analysis toolchain and the release app bundle.
       - run: nix build --no-link .#checks.aarch64-darwin.lint-and-test .#checks.aarch64-darwin.hawk .#checks.aarch64-darwin.dupin
 
-      # Use a separate diagnostic build so Rune's hotkey probes cannot ship in the release.
-      # tar keeps executable bits, which upload-artifact drops.
+      # The bundle is already in the store. tar keeps its executable bits, which
+      # upload-artifact drops.
       - run: |
-          nix build .#dupin.e2eProbe
+          nix build .#dupin
           tar -czf "$RUNNER_TEMP/Dupin.app.tar.gz" -C result/Applications Dupin.app
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
