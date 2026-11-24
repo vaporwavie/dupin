@@ -7,6 +7,14 @@
       "created_at": "2026-11-23T07:47:04Z",
       "repoId": 1466747516,
       "pullRequestNo": 166
+    },
+    {
+      "name": "yasunogithub",
+      "id": 29519029,
+      "comment_id": 7124098361,
+      "created_at": "2026-11-24T06:35:58Z",
+      "repoId": 1466747516,
+      "pullRequestNo": 253
     }
   ]
 }
