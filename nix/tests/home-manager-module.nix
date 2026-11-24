@@ -4,6 +4,8 @@
   lib,
   pkgs,
   module,
+  # The scopes the real package's bundled packages declare, by their package.json names.
+  bundledExtensions,
 }:
 let
   evaluate =
@@ -43,11 +45,15 @@ let
               enable = true;
               # Stands in for `dupin ext revision --json`, which names the package in the folder
               # and its revision.
-              package = pkgs.writeShellScriptBin "dupin" ''
-                [ "$1 $2 $4" = "ext revision --json" ] \
-                  && printf '{"package": %s, "revision": "blake3:%s"}\n' \
-                    "$(${lib.getExe pkgs.jq} .name "$3/package.json")" "$(basename "$3" | cut -c1-8)"
-              '';
+              package =
+                pkgs.writeShellScriptBin "dupin" ''
+                  [ "$1 $2 $4" = "ext revision --json" ] \
+                    && printf '{"package": %s, "revision": "blake3:%s"}\n' \
+                      "$(${lib.getExe pkgs.jq} .name "$3/package.json")" "$(basename "$3" | cut -c1-8)"
+                ''
+                // {
+                  inherit bundledExtensions;
+                };
             }
             // dupin;
           };
@@ -75,7 +81,23 @@ let
         enable = false;
       }
     ];
+    bundledExtensions = {
+      window-management.enable = true;
+      calendar.deny = [ "calendar" ];
+      clipboard-history.enable = false;
+      dictionary = { };
+    };
   };
+  bundledOnly = evaluate { bundledExtensions.window-management.enable = true; };
+  unbundled = evaluate { bundledExtensions.word-count.enable = true; };
+  undeclared = evaluate { bundledExtensions.calendar.deny = [ "clipboard:read" ]; };
+  # A scope the broker can't read is a type error, whichever option names it.
+  rejects =
+    dupin:
+    let
+      inherit ((evaluate dupin).programs.dupin) extensions bundledExtensions;
+    in
+    !(builtins.tryEval (builtins.deepSeq [ extensions bundledExtensions ] true)).success;
   # Two folders of one package, whose grants would both apply to it.
   clashing = evaluate {
     extensions = [
@@ -99,6 +121,48 @@ assert declared.xdg.configFile."dupin/extensions/word-count".source == fixture;
 assert declared.xdg.configFile."dupin/extensions/my-notes".source == notes;
 assert declared.launchd.agents.dupin.enable;
 assert !failed declared && failed duplicated;
+assert bundledExtensions.calendar == [ "calendar" ];
+assert
+  bundledExtensions.window-management == [
+    "windows:read"
+    "windows:arrange"
+  ];
+assert lib.elem "clipboard:watch" bundledExtensions.clipboard-history;
+assert bundledExtensions.dupin == [ ];
+assert !failed bundledOnly && failed unbundled && failed undeclared;
+assert lib.hasInfix "it declares calendar"
+  (lib.findFirst (a: !a.assertion) null undeclared.assertions).message;
+assert rejects { bundledExtensions.calendar.deny = [ "calender" ]; };
+assert rejects {
+  extensions = [
+    {
+      src = fixture;
+      deny = [ "clipboard:copy" ];
+    }
+  ];
+};
+assert rejects {
+  extensions = [
+    {
+      src = fixture;
+      grants = [ "http:http://api.example.com" ];
+    }
+  ];
+};
+assert
+  !rejects {
+    extensions = [
+      {
+        src = fixture;
+        grants = [
+          "http:https://api.example.com:8443"
+          "files:notes"
+          "script:build.v2"
+          "storage"
+        ];
+      }
+    ];
+  };
 pkgs.runCommand "dupin-home-manager-module"
   {
     nativeBuildInputs = [
@@ -125,12 +189,23 @@ pkgs.runCommand "dupin-home-manager-module"
           deny = [ "clipboard:read" ];
           bindings = { };
         };
+        "bundled:window-management".enabled = true;
+        "bundled:calendar".deny = [ "calendar" ];
+        "bundled:clipboard-history".enabled = false;
       };
+    };
+    bundledGrants = bundledOnly.xdg.configFile."dupin/extension-grants.toml".source;
+    bundledExpected = builtins.toJSON {
+      version = 1;
+      packages."bundled:window-management".enabled = true;
     };
   }
   ''
+    toml2json "$bundledGrants" | jq --sort-keys . > bundled-actual.json
+    printf '%s' "$bundledExpected" | jq --sort-keys . > bundled-expected.json
+    diff bundled-expected.json bundled-actual.json
     toml2json "$grants" | jq --sort-keys 'del(.packages[].revision)' > actual.json
-    toml2json "$grants" | jq -e '[.packages[].revision] | all(startswith("blake3:"))'
+    toml2json "$grants" | jq -e '.packages | with_entries(select(.key | startswith("bundled:") | not)) | map(.revision) | all(startswith("blake3:"))'
     printf '%s' "$expected" | jq --sort-keys . > expected.json
     diff expected.json actual.json
     grep -F 'more than one package is named word-count in package.json' "$clash/testBuildFailure.log"

@@ -1257,6 +1257,179 @@ fn a_bundled_package_that_ships_off_waits_to_be_turned_on_with_its_grants() {
 }
 
 #[test]
+fn a_base_without_a_revision_switches_bundled_packages_and_denies_their_scopes() {
+    let base = base(
+        r#"
+version = 1
+
+[packages."bundled:window-management"]
+enabled = true
+
+[packages."bundled:calendar"]
+deny = ["calendar"]
+
+[packages."bundled:emoji"]
+enabled = false
+"#,
+    );
+    let mut broker = Broker::new(base, Local::default());
+    let windows = id("bundled:window-management");
+    let calendar = id("bundled:calendar");
+    let emoji = id("bundled:emoji");
+    broker.set_bundled(windows.clone(), rev(R1), false);
+    broker.set_bundled(calendar.clone(), rev(R1), true);
+    broker.set_bundled(emoji.clone(), rev(R1), true);
+    let _ = broker.install(
+        windows.clone(),
+        rev(R1),
+        caps(json!({ "windows": ["read", "arrange"] })),
+    );
+    let _ = broker.install(
+        calendar.clone(),
+        rev(R1),
+        caps(json!({ "calendar": { "access": ["read"], "pastDays": 30, "futureDays": 90 } })),
+    );
+    let _ = broker.install(emoji.clone(), rev(R1), caps(json!({ "clipboard": ["paste"] })));
+    broker.set_os_access(OsPermission::Accessibility, OsAccess::Allowed);
+    broker.set_os_access(OsPermission::Calendars, OsAccess::Allowed);
+
+    assert!(
+        broker.is_enabled(&windows) && !broker.is_turned_off(&windows),
+        "the base turns on a package that ships off"
+    );
+    permit(broker.check(
+        &windows,
+        &rev(R1),
+        &Request::Windows(WindowsAccess::Arrange),
+        Trigger::Activation,
+    ));
+    broker.set_enabled(&windows, false).unwrap();
+    assert!(
+        broker.is_turned_off(&windows),
+        "a choice in Dupin can still turn it off"
+    );
+
+    let read = Request::CalendarRead {
+        past_days: 0,
+        future_days: 7,
+    };
+    assert!(broker.is_enabled(&calendar));
+    assert_eq!(
+        denial(broker.check(&calendar, &rev(R1), &read, Trigger::Query)),
+        Denial::DeniedByBase(ScopeKey::Calendar),
+        "a base denial outranks the bundled pre-grant"
+    );
+    assert_eq!(
+        broker.consent(&calendar, &rev(R1), &broker.consents(&calendar)[0].0, None),
+        Err(BrokerError::DeniedByBase(ScopeKey::Calendar))
+    );
+
+    assert!(broker.is_turned_off(&emoji));
+    assert_eq!(broker.set_enabled(&emoji, true), Err(BrokerError::DisabledByBase));
+}
+
+#[test]
+fn an_invalid_base_entry_keeps_only_its_own_package_off() {
+    let base = base(
+        r#"
+version = 1
+
+[packages."bundled:calendar"]
+deny = ["calender"]
+
+[packages."bundled:emoji"]
+deny = ["clipboard:paste"]
+"#,
+    );
+    assert_eq!(base.problems().len(), 1);
+    let mut broker = Broker::new(base, Local::default());
+    let calendar = id("bundled:calendar");
+    let emoji = id("bundled:emoji");
+    let dictionary = id("bundled:dictionary");
+    for (package, capabilities) in [
+        (
+            &calendar,
+            json!({ "calendar": { "access": ["read"], "pastDays": 30, "futureDays": 90 } }),
+        ),
+        (&emoji, json!({ "clipboard": ["paste"] })),
+        (&dictionary, json!({ "dictionary": ["lookup"] })),
+    ] {
+        broker.set_bundled(package.clone(), rev(R1), true);
+        let _ = broker.install(package.clone(), rev(R1), caps(capabilities));
+    }
+
+    assert!(
+        broker.is_turned_off(&calendar),
+        "what the entry meant to deny is unknown"
+    );
+    assert_eq!(
+        broker.set_enabled(&calendar, true),
+        Err(BrokerError::DisabledByBase)
+    );
+    assert!(
+        broker
+            .consents(&calendar)
+            .iter()
+            .all(|(_, state)| *state == ConsentState::DeniedByBase)
+    );
+
+    assert!(broker.is_enabled(&emoji));
+    assert_eq!(
+        broker.consents(&emoji),
+        vec![(
+            caps(json!({ "clipboard": ["paste"] }))
+                .scopes()
+                .next()
+                .unwrap()
+                .clone(),
+            ConsentState::DeniedByBase
+        )],
+        "the valid entry beside it still applies"
+    );
+    assert!(broker.is_enabled(&dictionary));
+    permit(broker.check(&dictionary, &rev(R1), &Request::DictionaryLookup, Trigger::Query));
+}
+
+#[test]
+fn an_unusable_base_withholds_bundled_pre_grants_until_it_is_fixed() {
+    let mut broker = Broker::new(Base::unusable("expected `=`"), Local::default());
+    let calendar = id("bundled:calendar");
+    let dictionary = id("bundled:dictionary");
+    broker.set_bundled(calendar.clone(), rev(R1), true);
+    broker.set_bundled(dictionary.clone(), rev(R1), true);
+    let _ = broker.install(
+        calendar.clone(),
+        rev(R1),
+        caps(json!({ "calendar": { "access": ["read"], "pastDays": 30, "futureDays": 90 } })),
+    );
+    let _ = broker.install(
+        dictionary.clone(),
+        rev(R1),
+        caps(json!({ "dictionary": ["lookup"] })),
+    );
+    broker.set_os_access(OsPermission::Calendars, OsAccess::Allowed);
+    let read = Request::CalendarRead {
+        past_days: 0,
+        future_days: 7,
+    };
+
+    assert!(
+        broker.is_enabled(&calendar),
+        "it still loads and answers what needs no capability"
+    );
+    assert_eq!(
+        consent_needed(broker.check(&calendar, &rev(R1), &read, Trigger::Query)).reason,
+        ConsentReason::NotGranted,
+        "what the unusable file denied is unknown"
+    );
+    broker.approve(&dictionary, &ScopeKey::Dictionary, None).unwrap();
+    permit(broker.check(&dictionary, &rev(R1), &Request::DictionaryLookup, Trigger::Query));
+
+    broker.replace_base(Base::default());
+    permit(broker.check(&calendar, &rev(R1), &read, Trigger::Query));
+}
+
+#[test]
 fn a_changed_copy_of_a_package_that_ships_off_waits_like_any_new_extension() {
     let mut broker = Broker::new(Base::default(), Local::default());
     let package = id("window-management");
