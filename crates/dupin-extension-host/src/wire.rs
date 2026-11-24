@@ -413,6 +413,7 @@ mod tests {
                     };
                     8
                 ],
+                web_search: None,
             })
             .collect();
         let mut left = MAX_PAGE_BYTES - rows.iter().map(Row::text_bytes).sum::<usize>();
@@ -471,6 +472,16 @@ mod tests {
             section: None,
             detail: None,
             actions: Vec::new(),
+            web_search: None,
+        };
+        let web_search = Row {
+            web_search: Some(dupin_js_runtime::web_search::WebSearch {
+                alias: "g".into(),
+                url: "https://example.com/?q={query}".into(),
+                title: "G {query}".into(),
+                fallback: Some(0),
+            }),
+            ..row.clone()
         };
         let span = || ModuleSpan {
             name: "main.js".into(),
@@ -543,7 +554,7 @@ mod tests {
                     change: PageChange::Update {
                         prepend: Vec::new(),
                         append: vec![row.clone()],
-                        replace: vec![row],
+                        replace: vec![web_search],
                         remove: vec!["b".into()],
                     },
                     ttl: Some(1),
@@ -610,7 +621,7 @@ mod tests {
         r#"{"kind":"done","id":1,"answer":{"kind":"compiled","modules":[{"name":"main.js","len":1}]}}"#,
         r#"{"kind":"done","id":1,"answer":{"kind":"checked","exports":{"search":true,"items":true}}}"#,
         r#"{"kind":"done","id":1,"answer":{"kind":"rows","items":[{"id":"a","title":"A","image":"h"}]}}"#,
-        r#"{"kind":"done","id":1,"answer":{"kind":"catalogue","page":{"change":{"kind":"update","append":[{"id":"a","title":"A","image":"h"}],"replace":[{"id":"a","title":"A","image":"h"}],"remove":["b"]},"ttl":1,"cursor":"c","more":true}}}"#,
+        r#"{"kind":"done","id":1,"answer":{"kind":"catalogue","page":{"change":{"kind":"update","append":[{"id":"a","title":"A","image":"h"}],"replace":[{"id":"a","title":"A","image":"h","web_search":{"alias":"g","url":"https://example.com/?q={query}","title":"G {query}","fallback":0}}],"remove":["b"]},"ttl":1,"cursor":"c","more":true}}}"#,
         r#"{"kind":"done","id":1,"answer":{"kind":"acted","acted":{"invalidated":true,"effect":{"type":"toast","text":"t"}}}}"#,
         r#"{"kind":"done","id":1,"answer":{"kind":"handled","handled":{"invalidated":true}}}"#,
         r#"{"kind":"done","id":1,"answer":{"kind":"cancelled"}}"#,

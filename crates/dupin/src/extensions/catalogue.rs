@@ -15,10 +15,11 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
-use dupin_core::Batch;
 use dupin_core::catalogue::{Catalogue, Change, ChangeError, Entry, Limits, Matching};
+use dupin_core::{Batch, Item};
 use dupin_extension_bridge::Generation;
 use dupin_js_runtime::row::{MAX_PAGE_BYTES, MAX_PAGE_ROWS, PageChange};
+use dupin_js_runtime::web_search::WebSearch;
 use dupin_js_runtime::{CataloguePage, Diagnostic, Preferences, Reason, Row, RunError};
 
 use super::Role;
@@ -137,6 +138,7 @@ impl Cached {
     /// another generation than the one `fetch` asks under. The main search doesn't ask again
     /// after a failure until one of those changes or the keyword's search succeeds, so a
     /// package that can't answer it, such as for want of consent, costs no call per keystroke.
+    /// Web searches are reached by their alias instead, through [`Cached::web_searches`].
     pub fn search(
         &self,
         query: &str,
@@ -145,6 +147,44 @@ impl Cached {
         fetch: &mut Fetch<'_>,
         convert: &dyn Convert,
     ) -> Result<Vec<Batch>, RunError> {
+        self.fresh(asking, fetch, convert, |catalogue| {
+            catalogue.search(query, limit, dupin_core::session::unix_now())
+        })
+    }
+
+    /// The catalogue's web searches, each with the row it shows before a query is typed,
+    /// refreshed as [`Cached::search`] refreshes the catalogue.
+    pub fn web_searches(
+        &self,
+        asking: Asking<'_>,
+        fetch: &mut Fetch<'_>,
+        convert: &dyn Convert,
+    ) -> Result<Vec<(Item, WebSearch)>, RunError> {
+        self.fresh(asking, fetch, convert, held_web_searches)
+    }
+
+    /// The web searches [`Cached::web_searches`] would return for `preferences` without asking
+    /// the package, if Dupin holds them and can read them without waiting for a search that is
+    /// filling the catalogue.
+    pub fn held_web_searches(&self, preferences: &Arc<Preferences>) -> Option<Vec<(Item, WebSearch)>> {
+        let state = self.shared.state.try_lock().ok()?;
+        let current = state.due.is_none()
+            && state.forgotten == self.shared.forgotten.load(Ordering::Acquire)
+            && !state.expires.is_some_and(|expires| Instant::now() >= expires)
+            && state
+                .preferences
+                .as_ref()
+                .is_some_and(|held| Arc::ptr_eq(held, preferences));
+        current.then(|| held_web_searches(&state.catalogue))
+    }
+
+    fn fresh<T: Default>(
+        &self,
+        asking: Asking<'_>,
+        fetch: &mut Fetch<'_>,
+        convert: &dyn Convert,
+        read: impl FnOnce(&Catalogue) -> T,
+    ) -> Result<T, RunError> {
         let mut state = self.shared.lock();
         self.shared.used.store(now_ms(), Ordering::Relaxed);
         let forgotten = self.shared.forgotten.load(Ordering::Acquire);
@@ -159,7 +199,7 @@ impl Cached {
             .is_some_and(|failed| Arc::ptr_eq(failed, asking.preferences));
         if held_off && asking.role == Role::DefaultSearch {
             self.shared.bytes.store(0, Ordering::Relaxed);
-            return Ok(Vec::new());
+            return Ok(T::default());
         }
         let refreshed = state.refresh(Instant::now(), asking.preferences, fetch, convert);
         state.failed = refreshed.is_err().then(|| asking.preferences.clone());
@@ -167,12 +207,10 @@ impl Cached {
             .bytes
             .store(state.catalogue.bytes(), Ordering::Relaxed);
         refreshed?;
-        let batches = state
-            .catalogue
-            .search(query, limit, dupin_core::session::unix_now());
+        let read = read(&state.catalogue);
         drop(state);
         self.keep_within_budget();
-        Ok(batches)
+        Ok(read)
     }
 
     /// How many rows the catalogue holds.
@@ -214,6 +252,13 @@ impl Shared {
     fn lock(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
+}
+
+fn held_web_searches(catalogue: &Catalogue) -> Vec<(Item, WebSearch)> {
+    catalogue
+        .web_searches()
+        .map(|(entry, search)| (entry.item.clone(), search.clone()))
+        .collect()
 }
 
 impl State {
@@ -344,6 +389,7 @@ mod tests {
             section: None,
             detail: None,
             actions: Vec::new(),
+            web_search: None,
         }
     }
 
@@ -374,6 +420,7 @@ mod tests {
                 keywords: row.keywords,
                 section: None,
                 detail: None,
+                web_search: row.web_search,
                 match_text: None,
                 time: None,
                 file: None,
@@ -670,6 +717,39 @@ mod tests {
     }
 
     #[test]
+    fn other_preferences_ask_a_failed_catalogue_again_for_web_searches() {
+        let cached = Cached::default();
+        let mut calls = 0;
+        let mut fetch = |_: Option<&str>, _, _: &Arc<Preferences>| {
+            calls += 1;
+            Err(RunError::Failed(Diagnostic::new(
+                "items-threw",
+                "bad preferences",
+            )))
+        };
+        let main = |preferences| Asking {
+            preferences,
+            generation: None,
+            role: Role::DefaultSearch,
+        };
+        let first = none();
+        assert!(cached.web_searches(main(&first), &mut fetch, ENTRY).is_err());
+        assert!(
+            cached
+                .web_searches(main(&first), &mut fetch, ENTRY)
+                .unwrap()
+                .is_empty(),
+            "held off with the same preferences"
+        );
+        let changed = Arc::new(Preferences::from_iter([(
+            "webSearches".into(),
+            serde_json::json!({}),
+        )]));
+        assert!(cached.web_searches(main(&changed), &mut fetch, ENTRY).is_err());
+        assert_eq!(calls, 2);
+    }
+
+    #[test]
     fn forgetting_never_waits_for_a_catalogue_being_asked_for() {
         use std::sync::mpsc;
 
@@ -936,5 +1016,63 @@ mod tests {
         let changed = Arc::new(Preferences::from_iter([("paste".into(), true.into())]));
         assert!(cached.search("a", 10, main(&changed), &mut fetch, ENTRY).is_err());
         assert_eq!(calls, 2);
+    }
+
+    #[test]
+    fn web_searches_come_from_the_catalogue_held_for_the_current_preferences() {
+        use dupin_js_runtime::web_search::WebSearch;
+
+        let cached = Cached::default();
+        let mut seen = Vec::new();
+        let mut fetch = |_: Option<&str>, reason, preferences: &Arc<Preferences>| {
+            seen.push((reason, preferences.len()));
+            let mut search = row("g", "Search Google");
+            search.web_search = Some(WebSearch {
+                alias: "g".into(),
+                url: "https://www.google.com/search?q={query}".into(),
+                title: "Search Google for {query}".into(),
+                fallback: None,
+            });
+            Ok(page(
+                PageChange::Reset {
+                    rows: vec![search, row("a", "Alpha")],
+                },
+                "1",
+                false,
+            ))
+        };
+        let first = none();
+        assert_eq!(cached.held_web_searches(&first), None);
+        let searches = cached.web_searches(keyword(&first), &mut fetch, ENTRY).unwrap();
+        assert_eq!(searches.len(), 1);
+        assert_eq!(searches[0].0.id, "held/g");
+        assert_eq!(searches[0].1.alias, "g");
+        assert_eq!(cached.held_web_searches(&first).unwrap().len(), 1);
+        assert_eq!(
+            titles(&cached.search("", 10, keyword(&first), &mut fetch, ENTRY).unwrap()),
+            ["Alpha"]
+        );
+        let changed = Arc::new(Preferences::from_iter([(
+            "webFallbacks".into(),
+            serde_json::json!(["g"]),
+        )]));
+        assert_eq!(
+            cached.held_web_searches(&changed),
+            None,
+            "held for other preferences"
+        );
+        cached.web_searches(keyword(&changed), &mut fetch, ENTRY).unwrap();
+        assert_eq!(seen, [(Reason::Load, 0), (Reason::Load, 1)]);
+        assert_eq!(cached.held_web_searches(&changed).unwrap().len(), 1);
+        assert_eq!(cached.held_web_searches(&first), None);
+
+        cached.shared.lock().expires = Some(Instant::now());
+        assert_eq!(cached.held_web_searches(&changed), None, "expired");
+        cached.shared.lock().expires = None;
+        let filling = cached.shared.lock();
+        assert_eq!(cached.held_web_searches(&changed), None, "being filled");
+        drop(filling);
+        cached.invalidate();
+        assert_eq!(cached.held_web_searches(&changed), None, "invalidated");
     }
 }

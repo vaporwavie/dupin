@@ -60,6 +60,7 @@ fn case(name: &str) -> Option<Override> {
             None,
             Some(Use::Effect(Request::Clipboard(ClipboardAccess::Paste))),
         ),
+        "web-search" => Override::extension("web-search", None),
         "window-management" => Override::extension(
             "window-management",
             Some(Use::Effect(Request::Windows(WindowsAccess::Arrange))),

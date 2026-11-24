@@ -470,6 +470,7 @@ fn a_port_answers_like_the_native_catalogue_it_replaces() {
                     .unwrap_or_default(),
                 section: row["section"].as_str().map(Into::into),
                 detail: None,
+                web_search: None,
                 match_text: None,
                 time: None,
                 file: None,

@@ -83,6 +83,29 @@ declare module 'dupin' {
 		 * without its icon or image and the actions that need it.
 		 */
 		file?: string;
+		/**
+		 * Makes the item a web search, which takes no `url`, `text` or `actions`. The package's own
+		 * keyword lists every web search for the query, and `webSearch.title` shows it; Enter
+		 * opens the URL filled with the query. Only the bundled Web Search package's also reach
+		 * the main search by their alias. Query matching never reaches the item.
+		 */
+		webSearch?: WebSearch;
+	}
+
+	/** Dupin fills `{query}` as the user types, without calling the package. */
+	export interface WebSearch {
+		/** Up to 32 ASCII letters, digits, `_` or `-`, matched case-sensitively. A keyword wins over it. */
+		alias: string;
+		/**
+		 * An `http` or `https` URL of up to 4,096 bytes, with no credentials and one `{query}` after
+		 * its host, which Dupin percent-encodes; or exactly `maps://?q={query}`, which opens Apple
+		 * Maps and needs a query.
+		 */
+		url: string;
+		/** The title once a query is typed: one line with one `{query}`, which the query replaces. */
+		title: string;
+		/** Offered, lowest first, when nothing else matches the main search: 0 to 1,000. */
+		fallback?: number;
 	}
 
 	export interface Metadata {
@@ -161,7 +184,8 @@ declare module 'dupin' {
 	/**
 	 * What the user chose for each of the manifest's `preferences`, or its default. The package
 	 * Dupin shipped for a built-in that reads config.toml also finds that built-in's settings
-	 * here; a change asks `items` again with reason `load`.
+	 * here, as Web Search finds `webSearches` and `webFallbacks`; a change asks `items` again
+	 * with reason `load`. Dupin freezes it through and through.
 	 */
 	export type Preferences = Readonly<Record<string, Json>>;
 

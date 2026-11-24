@@ -15,6 +15,7 @@ use crate::row::{
     MAX_TITLE_BYTES, MAX_TTL_SECONDS, Metadata, PageChange, Row, RowAction, RowDetail, RowEffect, RowImage,
     Source,
 };
+use crate::web_search::{self, WebSearch};
 use crate::{Diagnostic, Failure, MAX_ROWS};
 
 const MAX_TOAST_BYTES: usize = 512;
@@ -87,10 +88,11 @@ const ITEM_FIELDS: [&str; 10] = [
     "id", "title", "subtitle", "text", "url", "icon", "image", "section", "detail", "actions",
 ];
 const ITEM_FIELDS_HINT: &str = "Items take `id`, `title`, `subtitle`, `text`, `url`, `icon`, `image`, `section`, `detail` and `actions`.";
-const CATALOGUE_ITEM_FIELDS_HINT: &str = "Items take `id`, `title`, `subtitle`, `aliases`, `keywords`, `matchText`, `time`, `file`, `text`, `url`, `icon`, `image`, `section`, `detail` and `actions`.";
+const CATALOGUE_ITEM_FIELDS_HINT: &str = "Items take `id`, `title`, `subtitle`, `aliases`, `keywords`, `matchText`, `time`, `file`, `text`, `url`, `icon`, `image`, `section`, `detail`, `actions` and `webSearch`.";
 const IMAGE_HINT: &str = "Give a stored blob's `handle`, or a copied file's `{ path, handle }` as the clipboard watch delivered it.";
+const WEB_SEARCH_HINT: &str = "Give `webSearch` an `alias` such as `\"g\"`, a `url` such as `\"https://www.google.com/search?q={query}\"`, a `title` such as `\"Search Google for {query}\"` and optionally a `fallback` position.";
 /// Fields only an `items()` catalogue's items take.
-const CATALOGUE_ONLY_FIELDS: [&str; 5] = ["aliases", "keywords", "matchText", "time", "file"];
+const CATALOGUE_ONLY_FIELDS: [&str; 6] = ["aliases", "keywords", "matchText", "time", "file", "webSearch"];
 
 pub(crate) struct Reader<'a> {
     pub entry: &'a str,
@@ -548,6 +550,9 @@ impl<'a> Reader<'a> {
             let catalogue_only = CATALOGUE_ONLY_FIELDS.contains(&key.as_str());
             if !ITEM_FIELDS.contains(&key.as_str()) && !(catalogue_only && self.source == Source::Items) {
                 let hint = match self.source {
+                    Source::Search if key == "webSearch" => {
+                        "Dupin fills a `webSearch` as the user types; export `items` to list one."
+                    }
                     Source::Search if catalogue_only => {
                         "`aliases`, `keywords`, `matchText`, `time` and `file` describe items Dupin holds; export `items` to use them."
                     }
@@ -631,6 +636,19 @@ impl<'a> Reader<'a> {
             actions.push(RowAction::new("Copy", RowEffect::Copy { text }));
         }
         self.actions(&item, &field("actions"), &mut actions)?;
+        let web_search = self.web_search(&item, &field("webSearch"))?;
+        if web_search.is_some() && !actions.is_empty() {
+            return Err(self
+                .invalid(
+                    "invalid-field",
+                    field("webSearch"),
+                    "is on an item that also has `url`, `text` or `actions`",
+                )
+                .hint(
+                    "Dupin opens a web search's own URL; leave `url`, `text` and `actions` out of its item.",
+                )
+                .into());
+        }
         Ok(Row {
             id,
             title,
@@ -645,7 +663,83 @@ impl<'a> Reader<'a> {
             section,
             detail,
             actions,
+            web_search,
         })
+    }
+
+    fn web_search(&mut self, item: &Object<'_>, field: &str) -> Result<Option<WebSearch>, Failure> {
+        let value: Value = item.get("webSearch")?;
+        if value.is_undefined() || value.is_null() {
+            return Ok(None);
+        }
+        let Some(object) = plain_object(&value) else {
+            return Err(self
+                .invalid(
+                    "invalid-field",
+                    field,
+                    format!("must be an object, not {}", describe(&value)),
+                )
+                .hint(WEB_SEARCH_HINT)
+                .into());
+        };
+        self.only_keys(&object, &["alias", "url", "title", "fallback"], WEB_SEARCH_HINT)
+            .map_err(|failure| self.nested(failure, field))?;
+        let required = |reader: &mut Self, key: &str, cap: usize| {
+            let at = format!("{field}.{key}");
+            reader.string(&object, &at, key, cap)?.ok_or_else(|| {
+                Failure::from(
+                    reader
+                        .invalid("missing-field", at, "is required")
+                        .hint(WEB_SEARCH_HINT),
+                )
+            })
+        };
+        let alias = required(self, "alias", web_search::MAX_ALIAS_BYTES)?;
+        let url = required(self, "url", web_search::MAX_TEMPLATE_BYTES)?;
+        let title = required(self, "title", MAX_TITLE_BYTES)?;
+        let fallback: Value = object.get("fallback")?;
+        let fallback = if fallback.is_undefined() || fallback.is_null() {
+            None
+        } else {
+            match fallback.as_number() {
+                Some(position)
+                    if position.fract() == 0.0
+                        && (0.0..=f64::from(web_search::MAX_FALLBACK)).contains(&position) =>
+                {
+                    Some(position as u32)
+                }
+                _ => {
+                    return Err(self
+                        .invalid(
+                            "invalid-field",
+                            format!("{field}.fallback"),
+                            format!("must be a whole number from 0 to {}", web_search::MAX_FALLBACK),
+                        )
+                        .hint("Fallbacks are offered lowest first; leave `fallback` out to offer none.")
+                        .into());
+                }
+            }
+        };
+        let search = WebSearch {
+            alias,
+            url,
+            title,
+            fallback,
+        };
+        search.validate().map_err(|message| {
+            let (key, message) = message
+                .strip_prefix("`webSearch.")
+                .and_then(|rest| rest.split_once("` "))
+                .unwrap_or(("", message.as_str()));
+            let at = if key.is_empty() {
+                field.to_owned()
+            } else {
+                format!("{field}.{key}")
+            };
+            self.invalid("invalid-field", at, message.to_owned())
+                .hint(WEB_SEARCH_HINT)
+        })?;
+        Ok(Some(search))
     }
 
     /// A stored blob's handle, or a copied file's `{ path, handle }`. Only their shape is

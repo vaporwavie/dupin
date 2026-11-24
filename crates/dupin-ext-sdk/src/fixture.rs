@@ -46,7 +46,8 @@ pub struct Fixture {
     pub environment: Environment,
     #[serde(default, skip_serializing_if = "Replies::is_empty")]
     pub replies: Replies,
-    /// What `items` sees as `ctx.preferences`.
+    /// What the package's feature chose, which `ctx.preferences` holds in place of declared
+    /// defaults.
     #[serde(default, skip_serializing_if = "Map::is_empty")]
     pub preferences: Map<String, Value>,
     pub steps: Vec<Step>,

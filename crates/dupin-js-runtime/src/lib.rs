@@ -16,6 +16,8 @@ mod package;
 pub mod row;
 mod typescript;
 
+pub use dupin_plugin_protocol::web_search;
+
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;

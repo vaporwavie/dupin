@@ -154,9 +154,9 @@ impl<'a> Held<'a> {
         }
     }
 
-    /// The catalogue's matches for `query`, as the launcher ranks and groups them, asking the
-    /// package through `host` with `preferences` first when the catalogue is missing,
-    /// invalidated, expired or asked for with others.
+    /// The catalogue's matches for `query`, as the launcher ranks and groups them, then its web
+    /// searches filled with the query, asking the package through `host` with `preferences`
+    /// first when the catalogue is missing, invalidated, expired or asked for with others.
     fn search(
         &self,
         host: &Host,
@@ -177,8 +177,12 @@ impl<'a> Held<'a> {
             .cached
             .search(query, limit, asking, &mut fetch, self)
             .map_err(|error| self.extension.located(error))?;
+        let searches = self
+            .cached
+            .web_searches(asking, &mut fetch, self)
+            .map_err(|error| self.extension.located(error))?;
         let held = self.rows.borrow();
-        Ok(batches
+        let mut rows: Vec<Row> = batches
             .into_iter()
             .flat_map(|batch| {
                 let section = batch.section;
@@ -193,12 +197,21 @@ impl<'a> Held<'a> {
                     })
                     .collect::<Vec<_>>()
             })
-            .collect())
+            .collect();
+        rows.extend(
+            searches
+                .iter()
+                .filter_map(|(shown, search)| crate::web::item(shown, search, query.trim(), false))
+                .map(|item| item_row(self.extension, &item)),
+        );
+        rows.truncate(limit);
+        Ok(rows)
     }
 }
 
 /// What the launcher's keyword answers `query` with: `search`'s rows for a query that isn't
-/// blank, or for any query when the manifest sets `emptyQuery`, then the catalogue's matches.
+/// blank, or for any query when the manifest sets `emptyQuery`, then the catalogue's matches and
+/// web searches.
 fn query_rows(
     host: &Host,
     extension: &Extension,
@@ -416,6 +429,54 @@ fn replay(
         }
     }
     Ok(Replay { steps })
+}
+
+/// A web search's row as the launcher fills it, as fixtures state rows: the package's own ID
+/// and what each action does.
+fn item_row(extension: &Extension, item: &dupin_core::Item) -> Row {
+    let prefix = format!("extension:{}/", extension.id);
+    let subtitle = match &item.view {
+        dupin_core::View::Text { subtitle, .. } => subtitle.clone(),
+        _ => String::new(),
+    };
+    let actions = item
+        .actions
+        .iter()
+        .filter_map(|action| {
+            let effect = match item.action(&action.id)? {
+                dupin_core::Action::Copy(text) => RowEffect::Copy { text: text.clone() },
+                dupin_core::Action::OpenUrl(url) => RowEffect::OpenUrl { url: url.clone() },
+                dupin_core::Action::Extension {
+                    request: dupin_core::ExtensionRequest::Run { action, data },
+                    ..
+                } => RowEffect::Run {
+                    handler: action.clone(),
+                    data: data.clone(),
+                },
+                _ => return None,
+            };
+            Some(dupin_js_runtime::row::RowAction::new(
+                action.title.clone(),
+                effect,
+            ))
+        })
+        .collect();
+    Row {
+        id: item.id.strip_prefix(&prefix).unwrap_or(&item.id).to_owned(),
+        title: item.display_title().to_owned(),
+        subtitle,
+        aliases: Vec::new(),
+        keywords: Vec::new(),
+        match_text: None,
+        time: None,
+        file: None,
+        icon: None,
+        image: None,
+        section: None,
+        detail: None,
+        actions,
+        web_search: None,
+    }
 }
 
 /// A failed call is the step's outcome; a cancelled one means the step never ran.

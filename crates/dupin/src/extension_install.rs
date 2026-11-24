@@ -262,7 +262,8 @@ fn routed_keywords(bundled: Vec<(PathBuf, String, String)>) -> impl Fn(&str) -> 
         }
         commands
             .web
-            .has_keyword(keyword)
+            .aliases
+            .contains(keyword)
             .then(|| "a web search in config.toml".to_owned())
     }
 }

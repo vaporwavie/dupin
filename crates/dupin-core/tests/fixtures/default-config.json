@@ -8,24 +8,6 @@
 	"dictionary_keywords": ["define", "d"],
 	"calculator": true,
 	"calculator_currency": false,
-	"web_searches": {
-		"g": {
-			"name": "Google",
-			"url": "https://www.google.com/search?q={query}"
-		},
-		"gh": {
-			"name": "GitHub",
-			"url": "https://github.com/search?q={query}"
-		},
-		"maps": {
-			"name": "Apple Maps",
-			"url": "maps://?q={query}"
-		},
-		"yt": {
-			"name": "YouTube",
-			"url": "https://www.youtube.com/results?search_query={query}"
-		}
-	},
 	"web_fallbacks": [],
 	"snippets": {},
 	"snippet_keywords": ["snip"],

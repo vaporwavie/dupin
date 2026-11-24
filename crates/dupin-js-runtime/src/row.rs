@@ -4,6 +4,8 @@
 use dupin_plugin_protocol::{MAX_URL_BYTES, is_web_url};
 use serde::{Deserialize, Serialize};
 
+use crate::web_search::WebSearch;
+
 pub(crate) const MAX_TITLE_BYTES: usize = 512;
 pub(crate) const MAX_SUBTITLE_BYTES: usize = 2048;
 pub(crate) const MAX_ID_BYTES: usize = 128;
@@ -76,6 +78,9 @@ pub struct Row {
     pub detail: Option<RowDetail>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub actions: Vec<RowAction>,
+    /// Makes the catalogue row a web search, which Dupin fills and opens itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub web_search: Option<WebSearch>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -293,6 +298,15 @@ impl Row {
         if let Some(file) = &self.file {
             check_file(file)?;
         }
+        if let Some(web_search) = &self.web_search {
+            if source == Source::Search {
+                return Err("`webSearch` belongs to items()".into());
+            }
+            web_search.validate()?;
+            if !self.actions.is_empty() {
+                return Err("a web search opens its own URL, so it has no `url`, `text` or `actions`".into());
+            }
+        }
         if self.keywords.len() > MAX_KEYWORDS || self.aliases.len() > MAX_KEYWORDS {
             return Err("too many `aliases` or `keywords`".into());
         }
@@ -408,6 +422,7 @@ impl Row {
             + self.icon.as_ref().map_or(0, String::len)
             + self.image.as_ref().map_or(0, RowImage::text_bytes)
             + self.section.as_ref().map_or(0, String::len)
+            + self.web_search.as_ref().map_or(0, WebSearch::text_bytes)
             + detail
             + actions
     }

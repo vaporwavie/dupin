@@ -121,7 +121,7 @@ pub struct Ui {
     icon_cache: Option<ImageCache>,
     searchers: HashMap<CommandId, Searcher>,
     pub(crate) currency: crate::calculator::Currency,
-    pub(crate) web: Arc<RwLock<crate::web::WebCatalog>>,
+    pub(crate) web: Arc<RwLock<crate::web::WebSearches>>,
     /// What to paste once the panel has closed and the front app has its keys back.
     paste_after_close: Option<PendingPaste>,
     /// Why something wasn't pasted, to show once the panel has closed.

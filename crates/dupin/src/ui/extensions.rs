@@ -360,6 +360,26 @@ impl Ui {
         self.prefs.update(|prefs, _| prefs.refresh_permissions());
     }
 
+    /// The bridge every extension's host services go through.
+    pub(crate) fn extension_bridge(&self) -> Bridge {
+        self.extensions.bridge.clone()
+    }
+
+    /// The registered extensions whose catalogues answer the main search, in the order they
+    /// registered, which is where web searches come from.
+    pub(crate) fn web_search_sources(&self) -> Vec<Arc<Extension>> {
+        self.extensions
+            .active
+            .iter()
+            .filter(|extension| {
+                self.extensions.registered.values().any(|(registered, role)| {
+                    *role == Role::DefaultSearch && Arc::ptr_eq(registered, extension)
+                })
+            })
+            .cloned()
+            .collect()
+    }
+
     /// The values `package`'s preferences hold changed, so its catalogue is listed again with
     /// them on its next use.
     pub(crate) fn preferences_changed(&mut self, package: &str) {

@@ -118,6 +118,16 @@ pub fn answer(
     if exports.items {
         let left = limit.saturating_sub(batches.iter().map(|batch| batch.items.len()).sum());
         batches.extend(extension.catalogue(query, left, deadline, call, Role::Keyword)?);
+        let left = limit.saturating_sub(batches.iter().map(|batch| batch.items.len()).sum());
+        let searches: Vec<Item> = extension
+            .web_searches(deadline, call, Role::Keyword)?
+            .iter()
+            .filter_map(|(item, search)| crate::web::item(item, search, query.trim(), false))
+            .take(left)
+            .collect();
+        if !searches.is_empty() {
+            batches.push(Batch::from(searches));
+        }
     }
     Ok(batches)
 }
@@ -165,6 +175,10 @@ impl Convert for Extension {
     fn entry(&self, mut row: Row) -> Entry {
         let aliases = std::mem::take(&mut row.aliases);
         let keywords = std::mem::take(&mut row.keywords);
+        let web_search = row.web_search.take();
+        if web_search.is_some() {
+            self.note_keyword_only_web_searches();
+        }
         let match_text = row.match_text.take();
         let time = row.time.map(|ms| ms / 1000);
         let file = row.file.clone().map(Into::into);
@@ -176,6 +190,7 @@ impl Convert for Extension {
             keywords,
             section: section.map(Into::into),
             detail,
+            web_search,
             match_text,
             time,
             file,
@@ -222,6 +237,7 @@ pub(super) fn row_item(
         section,
         detail,
         actions: offered,
+        web_search: _,
     } = row;
     let detail = detail.map(|detail| {
         let mut shown = Detail::new(title.clone(), &detail.markdown);

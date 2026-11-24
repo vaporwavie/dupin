@@ -22,12 +22,14 @@ mod provider;
 use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Instant, SystemTime};
 
-use dupin_core::{Batch, Page};
+use dupin_core::{Batch, Item, Page};
 use dupin_extension_bridge::{Call, Capabilities, PackageId, Revision};
 use dupin_extension_host::{Compiled, Host, Services, Trust};
+use dupin_js_runtime::web_search::WebSearch;
 use dupin_js_runtime::{
     Acted, CataloguePage, Diagnostic, Exports, Handled, Preferences, Reason, Row, RunError, Sources,
 };
@@ -60,6 +62,7 @@ pub struct Extension {
     /// What the package exports, once a call has linked it.
     exports: OnceLock<Exports>,
     catalogue: catalogue::Cached,
+    web_searches_noted: AtomicBool,
     /// What the broker knows the package by: its `name`, or `bundled:<name>` for one that
     /// ships with Dupin.
     pub package: PackageId,
@@ -227,6 +230,59 @@ impl Extension {
                 services,
             )
         }
+    }
+
+    /// The catalogue's web searches, each with the row it shows before a query is typed, asking
+    /// the package first as [`Extension::catalogue`] does.
+    pub fn web_searches(
+        &self,
+        deadline: Instant,
+        call: &Call,
+        role: Role,
+    ) -> Result<Vec<(Item, WebSearch)>, RunError> {
+        let settings = preferences::of(&self.package);
+        let asking = Asking {
+            preferences: &settings,
+            generation: call.generation,
+            role,
+        };
+        let never = || false;
+        self.catalogue
+            .web_searches(
+                asking,
+                &mut self.fetch(host(), deadline, &never, &call.services),
+                self,
+            )
+            .map_err(|error| self.located(error))
+    }
+
+    /// What [`Extension::web_searches`] would return, if Dupin can answer it now without asking
+    /// the package or waiting.
+    pub fn held_web_searches(&self) -> Option<Vec<(Item, WebSearch)>> {
+        if !self.exports.get()?.items {
+            return Some(Vec::new());
+        }
+        self.catalogue.held_web_searches(&preferences::of(&self.package))
+    }
+
+    /// Whether the row `id` is one of this package's. A built-in's port keeps the built-in's
+    /// row IDs, which name no package, so it owns none by ID.
+    pub fn owns_row(&self, id: &str) -> bool {
+        let prefix = catalogue::Convert::entry_id(self, "");
+        !prefix.is_empty() && id.starts_with(&prefix)
+    }
+
+    /// Logs, once, that the package's web searches reach only its own keyword.
+    fn note_keyword_only_web_searches(&self) {
+        if crate::web::reaches_main_search(&self.package)
+            || self.web_searches_noted.swap(true, Ordering::Relaxed)
+        {
+            return;
+        }
+        crate::log::warn(&format!(
+            "extension {}: its web searches are listed only under its keyword `{}`; only the bundled Web Search package adds aliases and fallbacks to the main search",
+            self.id, self.keyword
+        ));
     }
 
     /// Drops the catalogue Dupin holds, so its next use asks for it from the start.
@@ -529,6 +585,7 @@ fn load_with(
             preferences: manifest.preferences,
             exports: OnceLock::new(),
             catalogue: catalogue::Cached::new(manifest.matching),
+            web_searches_noted: AtomicBool::new(false),
             package,
             revision,
             capabilities: manifest.capabilities,
@@ -722,6 +779,7 @@ pub(crate) mod tests {
             preferences: Default::default(),
             exports: OnceLock::new(),
             catalogue: catalogue::Cached::default(),
+            web_searches_noted: AtomicBool::new(false),
             revision: Revision::new("blake3:fixture").unwrap(),
             capabilities: Capabilities::default(),
             compiled: Compiled::empty(),
