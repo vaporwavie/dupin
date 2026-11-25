@@ -48,6 +48,9 @@ pub enum Command {
     Sync {
         action: SyncAction,
     },
+    /// What Settings saved over a read-only config.toml, as TOML, which the running launcher
+    /// holds open.
+    ConfigOverlay {},
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
@@ -108,6 +111,7 @@ impl Call {
             Command::SnapshotsClose {} => "snapshots close",
             Command::ExtensionDataDelete { .. } => "extension data delete",
             Command::Sync { .. } => "sync",
+            Command::ConfigOverlay {} => "config overlay",
         };
         crate::trace::control(kind, result.is_ok());
         let _ = self.reply.try_send(Reply {
