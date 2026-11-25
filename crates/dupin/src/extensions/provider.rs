@@ -1,8 +1,9 @@
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
 use dupin_core::catalogue::Entry;
 use dupin_core::form::{FieldKind, Form};
+use dupin_core::kind::{Kinds, Subject};
 use dupin_core::{
     Accessory, Action, Batch, Detail, ExtensionRequest, HostImage, HostImageSource, Icon, Item, ItemAction,
     Page, Payload, Provider, ProviderError, Request, View, snippets,
@@ -366,6 +367,24 @@ fn file_actions(row: &Row) -> Vec<String> {
         .collect()
 }
 
+/// The kinds a guest's row resolves through. A row's `text` and `url` are text and URLs as any
+/// source's are, but its `file` is a path the guest named, which Dupin hasn't checked is one
+/// the guest may act on, so it is no file-kind row: it shows the file's icon and nothing more.
+static GUEST_KINDS: LazyLock<Kinds> = LazyLock::new(|| Kinds::native(Vec::new()));
+
+/// The action `subject`'s kind runs first, under the ID and title the row gives it.
+fn kind_action(subject: &Subject, id: String, title: &str) -> ItemAction {
+    let mut action = GUEST_KINDS
+        .resolve(subject, title)
+        .actions
+        .into_iter()
+        .next()
+        .expect("the text and URL kinds offer an action for their own subjects");
+    action.id = id;
+    title.clone_into(&mut action.title);
+    action
+}
+
 /// A row as the launcher shows it, with what it shows beside the item.
 pub(super) struct Shown {
     pub item: Item,
@@ -447,7 +466,7 @@ pub(super) fn row_item(extension: &Extension, row: Row, catalogue: bool) -> Show
                     Action::Snippet { text, paste: false },
                 ),
                 RowEffect::Copy { text } => {
-                    ItemAction::new(&name(&mut copy, "copy"), &action.title, Action::Copy(text))
+                    kind_action(&Subject::Text(text), name(&mut copy, "copy"), &action.title)
                 }
                 RowEffect::Paste { text } => ItemAction::new(
                     &name(&mut paste, "paste"),
@@ -458,7 +477,7 @@ pub(super) fn row_item(extension: &Extension, row: Row, catalogue: bool) -> Show
                     },
                 ),
                 RowEffect::OpenUrl { url } => {
-                    ItemAction::new(&name(&mut open, "open"), &action.title, Action::OpenUrl(url))
+                    kind_action(&Subject::Url(url), name(&mut open, "open"), &action.title)
                 }
                 RowEffect::Reveal { path } => ItemAction::new(
                     &format!("action-{index}"),
