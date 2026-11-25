@@ -144,7 +144,7 @@ impl SyncService {
         config: &dupin_core::config::Sync,
         notify: impl Fn(UsageUpdate) + Send + Sync + 'static,
     ) -> Self {
-        let Some(storage) = crate::extensions::access::storage() else {
+        let Some(storage) = crate::extensions::access::shared_storage() else {
             return Self { jobs: None };
         };
         let (jobs, receive) = mpsc::channel();

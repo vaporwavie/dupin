@@ -36,10 +36,11 @@ pub fn storage_path() -> Option<PathBuf> {
     crate::store::data_dir().map(|dir| dir.join("storage"))
 }
 
-/// Encrypted storage under the data key in the user's Keychain, which is read only when a
-/// namespace is first opened. One per process, shared by extensions and sync, so the device's
-/// clock and ID are kept by one owner.
-pub fn storage() -> Option<Arc<dupin_storage::Storage>> {
+/// The launcher's one encrypted storage, under the data key in the user's Keychain, which is
+/// read only when a namespace is first opened. Extensions' namespaces and the built-ins' own,
+/// such as stored snippets and usage history, and sync share it, so the device's clock, ID and
+/// key have one owner, as a second root over the same folder would not.
+pub fn shared_storage() -> Option<Arc<dupin_storage::Storage>> {
     static STORAGE: OnceLock<Option<Arc<dupin_storage::Storage>>> = OnceLock::new();
     STORAGE
         .get_or_init(|| {
@@ -96,6 +97,7 @@ pub fn open(platform: Platform) -> Bridge {
                     "a headless run couldn't make scratch storage",
                 )),
             },
+            snippets: Box::new(crate::snippets::library()),
             ..Services::none()
         };
         let bridge = Bridge::new(Broker::new(base, Local::default()), None, services);
@@ -115,7 +117,7 @@ pub fn open(platform: Platform) -> Bridge {
             scripts: platform.scripts,
             runner: platform.runner,
         }),
-        storage: match storage() {
+        storage: match shared_storage() {
             Some(storage) => Box::new(PackageStorage::new(storage).on_error(|namespace, error| {
                 crate::log::warn(&format!("extension storage {namespace}: {error}"));
             })),
@@ -131,6 +133,7 @@ pub fn open(platform: Platform) -> Bridge {
             dupin_mac::SystemDictionary::default(),
         ))),
         calculator: Box::new(platform.calculator),
+        snippets: Box::new(crate::snippets::library()),
         calendar: Box::new(Calendars(calendar::Calendar::new(dupin_mac::EventStore::new(
             platform.calendar_access,
         )))),
