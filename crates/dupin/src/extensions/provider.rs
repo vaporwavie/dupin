@@ -591,7 +591,7 @@ fn row_item_with(kinds: &Kinds, extension: &Extension, row: Row, catalogue: bool
         record_usage: catalogue && extension.matching == dupin_core::catalogue::Matching::Fuzzy,
         icon: image
             .map(|image| Icon::Host(host_image(extension, image)))
-            .or_else(|| icon.map(|icon| Icon::Image(extension.root.join(icon))))
+            .or_else(|| icon.map(|icon| row_icon(extension, icon)))
             .or_else(|| file.map(|file| Icon::File(file.into()))),
         matched: Vec::new(),
         completion: None,
@@ -615,6 +615,15 @@ fn row_item_with(kinds: &Kinds, extension: &Extension, row: Row, catalogue: bool
     }
 }
 
+/// The icon a row names, which the row's check found to be a symbol's name or a path inside
+/// the package.
+fn row_icon(extension: &Extension, icon: String) -> Icon {
+    match icon.strip_prefix(dupin_core::item::SYMBOL_PREFIX) {
+        Some(name) => Icon::Symbol(name.to_owned()),
+        None => Icon::Image(extension.root.join(icon)),
+    }
+}
+
 /// The image a row of the extension names, which Dupin resolves in that package's storage.
 fn host_image(extension: &Extension, image: RowImage) -> HostImage {
     HostImage {
@@ -626,6 +635,20 @@ fn host_image(extension: &Extension, image: RowImage) -> HostImage {
                 handle: file.handle,
             },
         },
+    }
+}
+
+impl ExtensionProvider {
+    /// Among the main search's rows from every source, each of the package's rows without an
+    /// icon shows the package's. Under its keyword its chip shows it once, so its rows keep
+    /// only their own.
+    fn with_package_icon(&self, role: Role, mut batch: Batch) -> Batch {
+        if let (Role::DefaultSearch | Role::MainSearch, Some(icon)) = (role, &self.extension.icon) {
+            for item in &mut batch.items {
+                item.icon.get_or_insert_with(|| icon.clone());
+            }
+        }
+        batch
     }
 }
 
@@ -732,7 +755,10 @@ impl Provider for ExtensionProvider {
             }
         }
         match answer {
-            Ok(batches) => batches.into_iter().for_each(emit),
+            Ok(batches) => batches
+                .into_iter()
+                .map(|batch| self.with_package_icon(role, batch))
+                .for_each(emit),
             Err(RunError::Cancelled) => {}
             Err(RunError::Failed(diagnostic)) => {
                 crate::log::warn(&format!("extension {}: {diagnostic}", self.extension.id));

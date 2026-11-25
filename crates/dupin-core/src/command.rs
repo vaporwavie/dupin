@@ -85,6 +85,8 @@ pub struct CommandSpec {
     id: CommandId,
     /// What lists of commands call it, where its chip is not a name of its own.
     title: Option<String>,
+    /// What its chip and the rows that name it show beside its name.
+    icon: Option<crate::Icon>,
     pub result_limit: usize,
     candidate_limit: Option<usize>,
     fallback: bool,
@@ -99,6 +101,7 @@ impl CommandSpec {
         Self {
             id,
             title: None,
+            icon: None,
             result_limit,
             candidate_limit: None,
             fallback: false,
@@ -112,6 +115,15 @@ impl CommandSpec {
     pub fn with_title(mut self, title: impl Into<String>) -> Self {
         self.title = Some(title.into());
         self
+    }
+
+    pub fn with_icon(mut self, icon: crate::Icon) -> Self {
+        self.icon = Some(icon);
+        self
+    }
+
+    pub fn icon(&self) -> Option<&crate::Icon> {
+        self.icon.as_ref()
     }
 
     /// The command's name: its title, or else its chip or placeholder.
@@ -226,6 +238,9 @@ pub struct KeywordEntry {
     pub target: KeywordTarget,
     pub title: String,
     pub subtitle: String,
+    /// What the row naming it shows: the command's own icon, a globe for a web search, or the
+    /// Finder icon of the app, file or folder.
+    pub(crate) icon: Option<crate::Icon>,
     pub keywords: Vec<String>,
 }
 
@@ -244,6 +259,9 @@ fn checked(keyword: String) -> Result<String, CommandError> {
         Ok(keyword)
     }
 }
+
+/// What a web search's rows show: its keyword's row and the row that searches for the query.
+pub const WEB_SEARCH_SYMBOL: &str = "globe";
 
 #[derive(Clone, Debug)]
 pub struct CommandRegistry {
@@ -369,6 +387,17 @@ impl CommandRegistry {
             return Err(CommandError::DuplicateId(command.id));
         }
         self.commands.insert(command.id.clone(), command);
+        Ok(())
+    }
+
+    /// Gives a registered command the icon its chip and the rows naming it show, as for a
+    /// built-in command a bundled extension answers, whose package names the icon.
+    pub fn set_icon(&mut self, command: &CommandId, icon: crate::Icon) -> Result<(), CommandError> {
+        let spec = self
+            .commands
+            .get_mut(command)
+            .ok_or_else(|| CommandError::UnknownCommand(command.clone()))?;
+        spec.icon = Some(icon);
         Ok(())
     }
 
@@ -500,6 +529,7 @@ impl CommandRegistry {
                     target: KeywordTarget::Command(id.clone()),
                     title: spec.title().to_owned(),
                     subtitle: spec.presentation.placeholder.clone(),
+                    icon: spec.icon.clone(),
                     keywords,
                 })
             })
@@ -512,6 +542,7 @@ impl CommandRegistry {
                     target: KeywordTarget::Web(web.search.clone()),
                     title: web.title.clone(),
                     subtitle: "Web search".into(),
+                    icon: crate::Icon::symbol(WEB_SEARCH_SYMBOL),
                     keywords: Vec::new(),
                 })
                 .keywords
@@ -536,6 +567,7 @@ impl CommandRegistry {
                     target: KeywordTarget::Path(path.clone()),
                     title: title.clone(),
                     subtitle: crate::item::tilde(&path.to_string_lossy()),
+                    icon: Some(crate::Icon::File(path.clone())),
                     keywords: Vec::new(),
                 })
                 .keywords
