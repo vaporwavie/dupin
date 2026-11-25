@@ -89,6 +89,8 @@ pub struct Report {
     pub newer_epoch: bool,
     /// This device took a new ID: it was cloned, or removed by another Mac.
     pub reminted: bool,
+    /// Namespaces this device has finished leaving.
+    pub left: Vec<String>,
     /// Leaving devices whose files can't be taken over until a file of theirs opens.
     pub blocked_adoption: BTreeSet<DeviceId>,
     pub devices: Vec<DeviceStatus>,
@@ -219,18 +221,9 @@ impl Engine {
         Ok(self.storage.device_id()?)
     }
 
-    /// One full pass over the vault, its header and the devices in it.
-    pub fn run(&mut self) -> Result<Report, Error> {
-        self.run_with(&[], &[])
-    }
-
     /// One full pass: every namespace in `namespaces` is imported and exported, and every name
     /// in `leaving` is left.
-    pub(crate) fn run_with(
-        &mut self,
-        namespaces: &[Namespace<'_>],
-        leaving: &[&str],
-    ) -> Result<Report, Error> {
+    pub fn run(&mut self, namespaces: &[Namespace<'_>], leaving: &[&str]) -> Result<Report, Error> {
         let mut report = Report::default();
         if !self.check_vault(&mut report)? {
             return Ok(report);
@@ -967,11 +960,13 @@ impl Engine {
         else {
             self.own.namespaces.remove(&nsid);
             self.own.leaving.remove(&nsid);
+            report.left.push(name.to_owned());
             return Ok(());
         };
         if ns_dir.open_dir(&me.to_string())?.is_none() {
             self.own.namespaces.remove(&nsid);
             self.own.leaving.remove(&nsid);
+            report.left.push(name.to_owned());
             return Ok(());
         }
         if !self.own.leaving.contains(&nsid) {
@@ -986,16 +981,20 @@ impl Engine {
             .filter(|(id, descriptor)| descriptor.takes_part(&nsid) && !self.own.retired.contains_key(id))
             .map(|(_, descriptor)| descriptor)
             .collect();
-        let taken_over = !remaining.is_empty()
-            && remaining
-                .iter()
-                .all(|descriptor| descriptor.adopted.get(&nsid).is_some_and(|set| set.contains(&me)));
+        // With no other Mac to take its files over, they stay in the folder for one that
+        // joins later, and this Mac is done leaving.
+        let taken_over = remaining
+            .iter()
+            .all(|descriptor| descriptor.adopted.get(&nsid).is_some_and(|set| set.contains(&me)));
         if taken_over {
-            ns_dir.remove_tree(&me.to_string())?;
+            if !remaining.is_empty() {
+                ns_dir.remove_tree(&me.to_string())?;
+                report.removed += 1;
+            }
             self.own.namespaces.remove(&nsid);
             self.own.leaving.remove(&nsid);
             self.own.acks.remove(&nsid);
-            report.removed += 1;
+            report.left.push(name.to_owned());
         }
         Ok(())
     }

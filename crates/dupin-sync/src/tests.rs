@@ -157,11 +157,11 @@ impl Device {
             mode: Mode::Lww,
             fold: None,
         };
-        self.engine.run_with(&[namespace], &[]).unwrap()
+        self.engine.run(&[namespace], &[]).unwrap()
     }
 
     fn leave(&mut self) -> Report {
-        self.engine.run_with(&[], &[NAMESPACE]).unwrap()
+        self.engine.run(&[], &[NAMESPACE]).unwrap()
     }
 
     fn set(&self, key: &str, value: &str) {
@@ -504,7 +504,7 @@ fn links_in_the_folder_are_never_followed() {
     a.set("mine", "must not leak");
     let result = {
         let store = a.store.as_ref().unwrap();
-        a.engine.run_with(
+        a.engine.run(
             &[Namespace {
                 name: NAMESPACE,
                 store,
@@ -703,7 +703,7 @@ fn a_clock_far_ahead_is_named_and_held() {
         )
         .unwrap();
     b_engine
-        .run_with(
+        .run(
             &[Namespace {
                 name: NAMESPACE,
                 store: &b_store,
@@ -980,4 +980,94 @@ fn random_interleavings_converge_on_the_last_write() {
             }
         }
     }
+}
+
+/// Sums the counts in a leaving device's record into the folding device's own.
+struct SumFold;
+
+impl crate::Fold for SumFold {
+    fn fold(&self, store: &Store, own: DeviceId, leaving: DeviceId) -> Result<(), dupin_storage::Error> {
+        let count = |device: DeviceId| -> Result<u64, dupin_storage::Error> {
+            Ok(store
+                .get(&store.key_id(&device.to_string()))?
+                .and_then(|record| record.data.as_u64())
+                .unwrap_or(0))
+        };
+        let total = count(own)? + count(leaving)?;
+        store.upsert(
+            &own.to_string(),
+            NewRecord {
+                data: json!(total),
+                blobs: Vec::new(),
+            },
+        )?;
+        Ok(())
+    }
+}
+
+fn per_device_sync(device: &mut Device) -> Report {
+    let store = device.store.as_ref().unwrap();
+    device
+        .engine
+        .run(
+            &[Namespace {
+                name: NAMESPACE,
+                store,
+                mode: Mode::PerDevice,
+                fold: Some(&SumFold),
+            }],
+            &[],
+        )
+        .unwrap()
+}
+
+fn per_device_total(device: &Device) -> u64 {
+    device
+        .store()
+        .list(None, 200)
+        .unwrap()
+        .records
+        .iter()
+        .filter_map(|record| record.data.as_u64())
+        .sum()
+}
+
+#[test]
+fn a_removed_macs_per_device_record_is_folded_once() {
+    let world = World::new();
+    let mut a = world.first("a");
+    let mut b = world.joiner("b");
+    let mut c = world.joiner("c");
+    for (device, count) in [(&a, 1u64), (&b, 10), (&c, 100)] {
+        device
+            .store()
+            .upsert(
+                &device.id().to_string(),
+                NewRecord {
+                    data: json!(count),
+                    blobs: Vec::new(),
+                },
+            )
+            .unwrap();
+    }
+    for _ in 0..2 {
+        for device in [&mut a, &mut b, &mut c] {
+            per_device_sync(device);
+        }
+    }
+    assert_eq!(per_device_total(&a), 111);
+    let gone = c.id();
+    a.engine.retire(gone).unwrap();
+    for _ in 0..3 {
+        for device in [&mut a, &mut b] {
+            per_device_sync(device);
+        }
+    }
+    assert!(!a.ns_dir(&world).join(gone.to_string()).exists());
+    assert_eq!(
+        per_device_total(&a),
+        111,
+        "the removed Mac's count is kept exactly once"
+    );
+    assert_eq!(per_device_total(&b), 111);
 }

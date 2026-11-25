@@ -22,6 +22,7 @@ mod selection;
 mod snapshots;
 mod snippets;
 mod thumbnails;
+mod usage;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -148,8 +149,7 @@ pub struct Ui {
     calendar_access: dupin_mac::privacy::CalendarAccess,
     _apps_watcher: Option<AppsWatcher>,
     pub(crate) clipboard: crate::clipboard::Clipboard,
-    sync: crate::sync::Sync,
-    saver: crate::store::Saver,
+    sync: crate::sync::SyncService,
     position: Position,
     display: DisplaySelection,
     pub display_notice: Option<DisplayNotice>,
@@ -292,7 +292,6 @@ impl Ui {
             acknowledged_config: config.clone(),
             bindings_applied: false,
             session: registration.session,
-            saver: crate::store::Saver::spawn(),
             query,
             config_problem: None,
             hotkey_problem: None,
@@ -326,8 +325,11 @@ impl Ui {
             _apps_watcher: apps_watcher,
             clipboard,
             sync: match rune::tooling::is_headless() {
-                true => crate::sync::Sync::disabled(),
-                false => crate::sync::Sync::start(&config.sync),
+                true => crate::sync::SyncService::disabled(),
+                false => crate::sync::SyncService::start(&config.sync, {
+                    let me = me.clone();
+                    move |update| me.update(move |ui, _| ui.usage_changed(update))
+                }),
             },
             position: config.position,
             display: config.display,

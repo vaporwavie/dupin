@@ -17,6 +17,12 @@ Every call blocks on file I/O and must run on a worker thread, never the UI thre
 
 The broker bridge names an extension's namespace `ext-u-<hash>` for a package the user installed and `ext-b-<hash>` for one bundled with Dupin, where the hash is the first 160 bits of SHA-256 over the origin and the package ID. Native features use plain names without the `ext-` prefix, so the two never meet; neither do two packages, nor a user's copy of a bundled package and the bundled package itself, even when the copy is unmodified. The namespace opens with the quota and retention the package declares, bounded by Dupin's maxima (64 MiB, 10,000 records, 1 MiB per record, 3,650 days), stays open while Dupin runs, and a sweeper applies its retention hourly; every request also applies it first. Revoking `storage` keeps the namespace; `Bridge::delete_data`, which Settings' Delete Data, `dupin ext remove` and a fresh `dupin ext install` of the name call, discards it: it waits for requests already running, and a request that opened the namespace before then fails instead of writing into it.
 
+## Built-in namespaces
+
+A native feature opens its namespace by the name the [sync design](../design/sync.md#what-syncs) gives it, so sync can carry its records without a migration. Each shares the launcher's one `Storage` with the extensions' namespaces, so all of them follow one device clock.
+
+- **`usage`**: usage history, the ranking log, one record per device keyed by its device ID: what this Mac opened, how often, its latest ten visits and the queries it was picked for. Ranking adds every device's record together. Paths under the home folder are stored relative to it. The sync worker opens it at launch only when it exists, so a Mac with nothing recorded first reads the data key at its first pick; an older `history.json` is moved into it and removed. It syncs `per_device` when [sync](./sync.md) is on.
+
 ## On disk
 
 The host roots the store at `storage/` in the writable data directory that also holds `settings.toml`: `~/Library/Application Support/Dupin/storage`, or `$XDG_DATA_HOME/dupin/storage` when that is set. Directories are created `0700` and files `0600`.
