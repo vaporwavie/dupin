@@ -19,8 +19,9 @@ The broker bridge names an extension's namespace `ext-u-<hash>` for a package th
 
 ## Built-in namespaces
 
-A native feature opens its namespace by the name the [sync design](../design/sync.md#what-syncs) gives it, so sync can carry its records without a migration. Each shares the launcher's one `Storage` with the extensions' namespaces, so all of them follow one device clock.
+A native feature opens its namespace by the name the [sync design](../design/sync.md#what-syncs) gives it, so sync can later carry its records without a migration. Each shares the launcher's one `Storage` with the extensions' namespaces, so all of them follow one device clock.
 
+- **`snippets`**: the [snippets](./snippets.md) you add in Dupin, one record per snippet upserted under its keyword, holding `{ keyword, name, text }`. A record whose keyword doesn't name it is left out. Its limits leave room for every snippet Dupin lists (10,000), and writes use `upsert_within_limits`, so storing one never evicts another. Dupin opens it on a worker thread at launch only when the directory exists, so the data key is first read when you store a snippet, and a failure to open it is reported in the panel and retried on the next edit, never answered by deleting anything. It doesn't sync yet.
 - **`usage`**: usage history, the ranking log, one record per device keyed by its device ID: what this Mac opened, how often, its latest ten visits and the queries it was picked for. Ranking adds every device's record together. Paths under the home folder are stored relative to it. The sync worker opens it at launch only when it exists, so a Mac with nothing recorded first reads the data key at its first pick; an older `history.json` is moved into it and removed. It syncs `per_device` when [sync](./sync.md) is on.
 
 ## On disk

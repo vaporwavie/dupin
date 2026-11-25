@@ -107,6 +107,7 @@ let
       clipboard-history.enable = false;
       dictionary = { };
       calculator.deny = [ "query" ];
+      snippets.deny = [ "snippets" ];
     };
   };
   bundledOnly = evaluate { bundledExtensions.window-management.enable = true; };
@@ -217,6 +218,7 @@ pkgs.runCommand "dupin-home-manager-module"
         "bundled:calendar".deny = [ "calendar" ];
         "bundled:clipboard-history".enabled = false;
         "bundled:calculator".deny = [ "query" ];
+        "bundled:snippets".deny = [ "snippets" ];
       };
     };
     bundledGrants = bundledOnly.xdg.configFile."dupin/extension-grants.toml".source;
