@@ -373,6 +373,12 @@ impl VaultKey {
         &self.key
     }
 
+    /// The name a synced folder knows `namespace` by under this key, as
+    /// [`Store::namespace_id`] gives for a namespace open under it.
+    pub fn namespace_id(&self, namespace: &str) -> String {
+        hex(NamespaceKeys::derive(&self.key, self.source(), namespace).namespace_id())
+    }
+
     fn source(&self) -> KeySource {
         KeySource::Vault {
             id: self.id,
