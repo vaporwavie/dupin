@@ -10,6 +10,7 @@ mod general;
 mod keywords;
 mod permissions;
 mod search;
+mod sync;
 mod updates;
 pub mod welcome;
 
@@ -50,6 +51,7 @@ enum Page {
     Appearance,
     Extensions,
     Permissions,
+    Sync,
     Updates,
 }
 
@@ -62,6 +64,7 @@ impl Page {
             Page::Appearance => "Appearance",
             Page::Extensions => "Extensions",
             Page::Permissions => "Permissions",
+            Page::Sync => "Sync",
             Page::Updates => "Updates",
         }
     }
@@ -75,6 +78,7 @@ impl Page {
             Page::Appearance => "page-appearance",
             Page::Extensions => "page-extensions",
             Page::Permissions => "page-permissions",
+            Page::Sync => "page-sync",
             Page::Updates => "page-updates",
         }
     }
@@ -87,6 +91,7 @@ impl Page {
             Page::Appearance => &icons::SPARKLES,
             Page::Extensions => &icons::PUZZLE,
             Page::Permissions => &icons::SHIELD,
+            Page::Sync => &icons::CLOUD,
             Page::Updates => &icons::REFRESH,
         }
     }
@@ -122,6 +127,7 @@ pub struct Prefs {
     /// Why the last Allow, Revoke or switch on Extensions didn't apply.
     extension_problem: Option<String>,
     keywords: keywords::Keywords,
+    sync: sync::SyncPane,
 }
 
 impl Prefs {
@@ -148,6 +154,7 @@ impl Prefs {
             preview_dark: None,
             active_radius,
             keywords: keywords::Keywords::new(&config),
+            sync: sync::SyncPane::default(),
             config,
             current,
             page: Page::General,
@@ -185,6 +192,9 @@ impl Prefs {
         self.welcome = None;
         self.page = page;
         self.refresh_permissions();
+        if page == Page::Sync {
+            self.sync_ask(crate::control::SyncAction::Status {});
+        }
     }
 
     pub fn reflect_extensions(
@@ -357,6 +367,7 @@ pub fn view(s: &Prefs, cx: &mut Cx<Prefs>) -> El {
             .chain(extensions::page(s, k, hair))
             .collect(),
         (None, Page::Permissions) => permissions::page(s, k, hair),
+        (None, Page::Sync) => sync::page(s, k, hair),
         (None, Page::Updates) => updates::page(s, k, hair),
     };
     let title = s.welcome.map_or(s.page.title(), welcome::Step::title);
@@ -442,6 +453,7 @@ fn sidebar(s: &Prefs, k: &Kit) -> El {
     ]
     .into_iter()
     .chain(permissions)
+    .chain([Page::Sync])
     {
         let on = s.welcome.is_none() && s.page == page;
         let mut item = row()
