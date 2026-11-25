@@ -27,9 +27,9 @@ const SALT_LEN: usize = 16;
 /// Argon2id cost, as stored in the header.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct KdfParams {
-    pub(crate) memory_kib: u32,
-    pub(crate) iterations: u32,
-    pub(crate) parallelism: u32,
+    memory_kib: u32,
+    iterations: u32,
+    parallelism: u32,
 }
 
 impl KdfParams {
@@ -46,13 +46,13 @@ impl KdfParams {
         parallelism: 1,
     };
     /// And anything this expensive, so a tampered header can't exhaust memory or time.
-    pub(crate) const CEILING: KdfParams = KdfParams {
+    const CEILING: KdfParams = KdfParams {
         memory_kib: 1024 * 1024,
         iterations: 16,
         parallelism: 16,
     };
 
-    pub(crate) fn check(&self) -> Result<(), Error> {
+    fn check(&self) -> Result<(), Error> {
         let refuse = |why: String| Err(Error::UnacceptableKdf(why));
         if self.memory_kib < Self::FLOOR.memory_kib || self.iterations < Self::FLOOR.iterations {
             return refuse(format!(
@@ -324,7 +324,7 @@ impl VaultHeader {
     /// Unwraps the vault key with the passphrase. The derivation's cost is checked against
     /// [`KdfParams::FLOOR`] and [`KdfParams::CEILING`] first, and the unwrapped key must also
     /// open the header's check.
-    pub(crate) fn unwrap(&self, passphrase: &Passphrase) -> Result<VaultKey, Error> {
+    fn unwrap(&self, passphrase: &Passphrase) -> Result<VaultKey, Error> {
         let (Some((params, salt)), Some(wrapped)) = (self.kdf, &self.wrapped) else {
             return Err(Error::KeyUnavailable);
         };

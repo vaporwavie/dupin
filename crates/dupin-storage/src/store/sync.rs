@@ -20,10 +20,10 @@ pub struct Version {
     pub stamp: Stamp,
     pub deleted: bool,
     /// Only on the clear marker: every version stamped before this is cleared.
-    pub(crate) clear_before: Option<Stamp>,
+    clear_before: Option<Stamp>,
     pub blobs: Vec<BlobRef>,
     /// Live, but a blob it uses has not arrived.
-    pub(crate) pending: bool,
+    pending: bool,
 }
 
 impl Version {
