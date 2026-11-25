@@ -87,6 +87,14 @@ struct KeyFile {
     keys: BTreeMap<String, String>,
 }
 
+impl Drop for KeyFile {
+    fn drop(&mut self) {
+        for value in self.keys.values_mut() {
+            zeroize::Zeroize::zeroize(value);
+        }
+    }
+}
+
 impl FileVaultKeys {
     pub fn new(path: impl Into<PathBuf>) -> Self {
         Self { path: path.into() }
@@ -153,20 +161,14 @@ impl LocalKeyStore for FileVaultKeys {
     fn store(&self, vault: [u8; 16], epoch: u32, key: &DataKey) -> Result<(), Error> {
         let mut file = self.read()?;
         file.keys.insert(account(vault, epoch), hex(key.as_bytes()));
-        let result = self.write(&file);
-        for value in file.keys.values_mut() {
-            zeroize::Zeroize::zeroize(value);
-        }
-        result
+        self.write(&file)
     }
 
     fn delete(&self, vault: [u8; 16], epoch: u32) -> Result<(), Error> {
         let mut file = self.read()?;
-        if file.keys.remove(&account(vault, epoch)).is_some() {
+        if let Some(mut removed) = file.keys.remove(&account(vault, epoch)) {
+            zeroize::Zeroize::zeroize(&mut removed);
             self.write(&file)?;
-        }
-        for value in file.keys.values_mut() {
-            zeroize::Zeroize::zeroize(value);
         }
         Ok(())
     }

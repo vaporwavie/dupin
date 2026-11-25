@@ -6,6 +6,8 @@ The owner uses Dupin on more than one Mac and wants the same snippets, settings,
 
 Sync must work without a Dupin server or account, keep the synced copy unreadable to whoever hosts it, survive the quirks of consumer sync tools, and fit the extension platform so that a built-in feature or an extension gets sync from the host instead of building its own. It builds on [encrypted storage](https://github.com/x-ryoppippi/dupin/pull/230) (`dupin-storage`, documented in `docs/features/storage.md`), the [settings layering](../configuration.md) and the [extension lock file](https://github.com/x-ryoppippi/dupin/pull/229). [Extension platform](./extension-platform.md) · [Tracking issue](https://github.com/x-ryoppippi/dupin/issues/218)
 
+**Status:** approved; being built. The storage format changes and the `dupin-sync` engine and vault have landed; no feature syncs yet. See [Rollout](#rollout) for what is done and [Decisions made while building](#decisions-made-while-building) for what the design left open.
+
 ## Decision summary
 
 - **Folder-based sync, no server.** Dupin reads and writes a user-chosen folder that some other tool keeps in step: iCloud Drive by default, Dropbox, Syncthing or any folder sync. There is no Dupin server and no CloudKit: CloudKit needs an iCloud container entitlement that ad hoc and Nix builds cannot carry, and it does not exist on Linux. Dupin targets macOS; Windows is out of scope and a Linux port is deferred, but the folder mechanism would carry over to Linux unchanged, which is one reason to prefer it.
@@ -303,7 +305,9 @@ These change the format in #230. Landing them in #230, or right after it and bef
 1. Make the [format changes](#required-changes-to-dupin-storage) in #230 or straight after it, before a release stores data.
 2. Move `history.json` into the `usage` namespace and snippets into the `snippets` namespace, still local, and update the welcome check in `docs/features/settings.md`.
 3. Add `dupin-sync` with the folder layout, the hybrid logical clock and its drift bound, import and export, tombstones and their acknowledgements, leaving and rejoining, retention and handling of sync-tool files. Test it with a deterministic simulation: several virtual devices over a fault-injecting folder that reorders, delays, duplicates and truncates files, makes conflicted copies and placeholders, skews clocks, switches namespaces off and on, retires devices and interrupts re-seals, and check that every device converges, nothing deleted comes back and nothing live is lost.
+   **Done**, apart from key rotation (no epoch after 1 is created yet) and asking iCloud to download a placeholder, which the engine leaves to a platform hook that nothing supplies yet. `dupin-storage` opens a namespace under a vault key, re-seals files under any key it holds, keeps tombstones, clear markers and pending records in synced namespaces, and imports another device's version only when its stamp is newer. The tests run several devices, each with its own store, over one folder on one machine: tampered, truncated, garbage and replayed files, links planted in the folder, conflicted copies, a skewed clock, leaving, rejoining, retiring, a cloned data directory, competing vaults, and seeded random interleavings of edits, deletions, truncation, copies and time jumps of up to weeks that must converge on the last write.
 4. Add the vault: the passphrase mode first, since it works in every build, then the synchronizable Keychain item in builds that carry the access group entitlement. Add `dupin sync init|join|status|remove-device|rotate` with `--json`.
+   **Vault done; CLI not yet.** Passphrase mode, and iCloud Keychain mode where the process carries a `keychain-access-groups` entitlement (`dupin-mac::keychain::ICloudKeychain::available`); the release build carries none, so it uses a passphrase. This Mac's own copy is the `vault-<vault id>-<epoch>.local` Keychain item, `VaultKeychain`, or `vault.key` through `FileVaultKeys`.
 5. Sync settings with the shared/device-local classification and the layering changes.
 6. Sync snippets and extension records with reinstall per Mac.
 7. Sync usage history.
@@ -311,6 +315,19 @@ These change the format in #230. Landing them in #230, or right after it and bef
 9. Add `storage.sync` for extensions behind its consent.
 
 Running the suite on Linux with Syncthing and Dropbox folders waits for the deferred Linux port, and is not planned now.
+
+## Decisions made while building
+
+Where the design left a choice open, the implementation takes the more restrictive one:
+
+- **An upper bound on the key derivation.** Joining refuses Argon2id parameters above m = 1 GiB, t = 16 or p = 16, as well as below the floor, so a tampered header can't make a Mac allocate unbounded memory or spin for minutes. The algorithm must be Argon2id version 1.3, and a header with a field this version doesn't know is refused rather than ignored: a later format bumps the header's format byte.
+- **iCloud Keychain mode always writes the passphrase backup.** Dupin can't tell whether iCloud Keychain is turned on, so a vault created with the synchronizable item is also wrapped under a passphrase; the mode without a backup is never created.
+- **A folder that holds the data directory is refused**, as well as one inside it, since syncing it would put `settings.toml` and the local store in the folder. SMB, AFP, WebDAV, CIFS and FTP mounts are refused; NFS only with the override.
+- **No path in the folder is followed through a link.** Every directory and file is opened one component at a time with `O_NOFOLLOW`; a link is skipped when reading, replaced rather than written through, and removed as a link. A device's own directory replaced by a link makes its export fail instead of writing elsewhere.
+- **Writes are always staged in `tmp.nosync/<device id>/` inside the folder**, which is always on the folder's volume, instead of in `storage/tmp/` when that happens to share it. Tools other than iCloud Drive may upload a staged file; no reader looks at it.
+- **A creating Mac needs a checked passphrase**: generated, or chosen and accepted. A passphrase typed to unlock an existing vault is never judged.
+- **A descriptor change that other devices act on** (namespaces, leaving, adopted, retired) is written at once; one that only moves `seen_at` or the acknowledgements waits for the once-a-minute rewrite.
+- **An upserted record carries its logical key in its sealed header**, so a re-seal can move it to the key's ID under the new key. That is a new optional header field, not a format change.
 
 ## Open questions
 

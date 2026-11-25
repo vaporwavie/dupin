@@ -1050,6 +1050,7 @@ dependencies = [
  "dupin-core",
  "dupin-host-services",
  "dupin-storage",
+ "dupin-sync",
  "libc",
  "memmap2",
  "objc2 0.6.5",
