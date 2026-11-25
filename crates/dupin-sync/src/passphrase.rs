@@ -5,7 +5,8 @@ use std::fmt;
 
 use zeroize::Zeroizing;
 
-const WORDS: &str = include_str!("../data/eff_large_wordlist.txt");
+use crate::words::WordList;
+
 /// Passwords of at least the minimum length from a list of the most used ones, lowercased.
 const COMMON: &str = include_str!("../data/common_passwords.txt");
 pub const GENERATED_WORDS: usize = 6;
@@ -42,15 +43,13 @@ impl fmt::Display for Weakness {
 
 impl Passphrase {
     /// Six words from the EFF long list (7,776 words), about 77 bits.
-    pub fn generate() -> Result<Self, getrandom::Error> {
-        let words: Vec<&str> = WORDS.lines().collect();
-        debug_assert_eq!(words.len(), 7776);
+    pub fn generate(words: &WordList) -> Result<Self, getrandom::Error> {
         let mut chosen = Zeroizing::new(String::with_capacity(64));
         for index in 0..GENERATED_WORDS {
             if index > 0 {
                 chosen.push(' ');
             }
-            chosen.push_str(words[uniform(words.len() as u32)? as usize]);
+            chosen.push_str(words.get(uniform(words.len() as u32)? as usize));
         }
         Ok(Self {
             text: chosen,
@@ -109,13 +108,13 @@ mod tests {
 
     #[test]
     fn generated_passphrases_are_six_listed_words() {
-        let words: std::collections::HashSet<&str> = WORDS.lines().collect();
-        assert_eq!(words.len(), 7776);
-        let first = Passphrase::generate().unwrap();
+        let list = crate::words::shipped();
+        let words: std::collections::HashSet<&str> = (0..list.len()).map(|i| list.get(i)).collect();
+        let first = Passphrase::generate(&list).unwrap();
         let parts: Vec<&str> = first.expose().split(' ').collect();
         assert_eq!(parts.len(), GENERATED_WORDS);
         assert!(parts.iter().all(|word| words.contains(word)));
-        assert_ne!(first.expose(), Passphrase::generate().unwrap().expose());
+        assert_ne!(first.expose(), Passphrase::generate(&list).unwrap().expose());
         assert!(Passphrase::chosen(first.expose()).is_ok());
     }
 
