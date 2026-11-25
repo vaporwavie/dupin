@@ -59,4 +59,4 @@ Whoever hosts the folder, and anyone who can read it or a backup of it, learns n
 
 ## Acknowledgements
 
-The passphrase word list is the [EFF long word list](https://www.eff.org/deeplinks/2016/07/new-wordlists-random-passphrases) by the Electronic Frontier Foundation, under CC BY 3.0 US. The list of common passwords comes from [SecLists](https://github.com/danielmiessler/SecLists), under the MIT License. Both are in `crates/dupin-sync/data`, with their notices.
+The passphrase word list is the [EFF long word list](https://www.eff.org/deeplinks/2016/07/new-wordlists-random-passphrases) by the Electronic Frontier Foundation, under CC BY 3.0 US. The list of common passwords comes from [SecLists](https://github.com/danielmiessler/SecLists), under the MIT License. Both are in `crates/dupin-sync/data` and listed with their licences in Dupin's third-party notices (`dupin --licenses`).

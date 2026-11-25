@@ -9,6 +9,8 @@ extend-ignore-re = [
 centre = "centre"
 centred = "centred"
 colour = "colour"
+licence = "licence"
+licences = "licences"
 maximise = "maximise"
 
 [files]
@@ -26,4 +28,6 @@ extend-exclude = [
 	"extensions/emoji/fixtures/*.json",
 	# Word lists for passphrases, as published.
 	"crates/dupin-sync/data/*.txt",
+	# Licence texts, verbatim, typos included.
+	"packaging/licences/CC-BY-3.0-US.txt",
 ]

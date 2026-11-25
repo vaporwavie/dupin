@@ -14,6 +14,7 @@ mod passphrase;
 mod seal;
 mod setup;
 mod vault;
+mod words;
 
 #[cfg(test)]
 mod tests;
@@ -25,3 +26,4 @@ pub use keys::{LocalKeyStore, SharedKeyStore, account};
 pub use passphrase::{Passphrase, Weakness};
 pub use setup::{Joined, create, join, resume};
 pub use vault::{KdfParams, KeyMode, VaultHeader};
+pub use words::WordList;

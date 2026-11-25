@@ -626,7 +626,10 @@ impl Worker {
         let folder = self.open_folder(&path)?;
         let (passphrase, generated) = match passphrase {
             Some(text) => (Passphrase::chosen(&text).map_err(|weak| weak.to_string())?, false),
-            None => (Passphrase::generate().map_err(|error| error.to_string())?, true),
+            None => (
+                Passphrase::generate(&word_list()?).map_err(|error| error.to_string())?,
+                true,
+            ),
         };
         let shared = ICloudKeychain::available();
         let device = self.storage.device_id().map_err(|error| error.to_string())?;
@@ -766,6 +769,29 @@ impl Worker {
     }
 }
 
+/// The EFF long word list, which ships as a file in Dupin.app's Resources since its licence
+/// (CC BY 3.0 US) keeps it out of the binary; a build from the source tree reads the
+/// repository's copy.
+fn word_list() -> Result<dupin_sync::WordList, String> {
+    const FILE: &str = "eff_large_wordlist.txt";
+    let executable = std::env::current_exe()
+        .and_then(|path| path.canonicalize())
+        .map_err(|error| error.to_string())?;
+    let path = match crate::extensions::bundled::resources(&executable) {
+        Some(resources) => resources.join(FILE),
+        None => Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../dupin-sync/data")
+            .join(FILE),
+    };
+    let text = std::fs::read_to_string(&path).map_err(|error| {
+        format!(
+            "couldn't read the passphrase word list {}: {error}",
+            path.display()
+        )
+    })?;
+    dupin_sync::WordList::parse(&text)
+}
+
 fn expand_home(path: &str) -> PathBuf {
     match (path.strip_prefix("~/"), std::env::var_os("HOME")) {
         (Some(rest), Some(home)) => PathBuf::from(home).join(rest),
@@ -783,6 +809,11 @@ mod tests {
         assert_eq!(unhex16(&hex(&id)), Some(id));
         assert_eq!(unhex16("AB"), None);
         assert_eq!(unhex16(&"AB".repeat(16)), None);
+    }
+
+    #[test]
+    fn a_source_build_finds_the_word_list() {
+        assert!(word_list().is_ok());
     }
 
     #[test]
