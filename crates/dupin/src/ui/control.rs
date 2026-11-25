@@ -113,6 +113,10 @@ impl Ui {
                     call.finish(result.map(|()| serde_json::Value::Null));
                 });
             }
+            Command::Sync { action } => {
+                let action = action.clone();
+                self.sync.control(action, call);
+            }
             Command::ConfigGet {} => call.finish(
                 serde_json::to_value(&*self.configuration.values.borrow())
                     .map_err(|_| "could not encode settings".into()),

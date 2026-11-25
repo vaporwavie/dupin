@@ -185,7 +185,7 @@ pub fn eject(name: &str) -> Result<PathBuf, Diagnostic> {
         &bundled,
         &user,
         crate::extensions::access::local_path().as_deref(),
-        crate::extensions::access::storage().as_ref(),
+        crate::extensions::access::storage().as_deref(),
         name,
     )
 }

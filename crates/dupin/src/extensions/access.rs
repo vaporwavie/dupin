@@ -37,12 +37,19 @@ pub fn storage_path() -> Option<PathBuf> {
 }
 
 /// Encrypted storage under the data key in the user's Keychain, which is read only when a
-/// namespace is first opened.
-pub fn storage() -> Option<dupin_storage::Storage> {
-    Some(dupin_storage::Storage::new(
-        storage_path()?,
-        dupin_mac::keychain::KeychainKey,
-    ))
+/// namespace is first opened. One per process, shared by extensions and sync, so the device's
+/// clock and ID are kept by one owner.
+pub fn storage() -> Option<Arc<dupin_storage::Storage>> {
+    static STORAGE: OnceLock<Option<Arc<dupin_storage::Storage>>> = OnceLock::new();
+    STORAGE
+        .get_or_init(|| {
+            let storage = dupin_storage::Storage::new(storage_path()?, dupin_mac::keychain::KeychainKey);
+            Some(Arc::new(match dupin_mac::machine::platform_uuid() {
+                Some(uuid) => storage.with_hardware_id(uuid.as_bytes()),
+                None => storage,
+            }))
+        })
+        .clone()
 }
 
 /// What the platform services need from the launcher.

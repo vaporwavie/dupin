@@ -908,6 +908,7 @@ dependencies = [
  "dupin-mac",
  "dupin-plugin-protocol",
  "dupin-storage",
+ "dupin-sync",
  "fend-core",
  "libc",
  "naga",
@@ -925,6 +926,7 @@ dependencies = [
  "tempfile",
  "toml",
  "wgpu",
+ "zeroize",
 ]
 
 [[package]]

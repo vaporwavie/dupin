@@ -85,7 +85,7 @@ impl Passphrase {
         &self.text
     }
 
-    pub fn is_checked(&self) -> bool {
+    pub(crate) fn is_checked(&self) -> bool {
         self.checked
     }
 }

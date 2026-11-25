@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use dupin_storage::{
-    Clock, DataKey, Error, Imported, Limits, MemoryKey, NewRecord, RecordId, Storage, Store, VaultKey,
+    Clock, DataKey, Error, Imported, Limits, MemoryKey, NewRecord, Storage, Store, VaultKey,
 };
 use serde_json::json;
 
@@ -413,5 +413,4 @@ fn a_reminted_device_stamps_with_its_new_id() {
     assert_ne!(old, new);
     assert_eq!(device.storage.previous_device_id().unwrap(), Some(old));
     assert_eq!(store.put(text("x")).unwrap().device(), new);
-    assert_eq!(RecordId::CLEAR.to_string(), "0".repeat(32));
 }

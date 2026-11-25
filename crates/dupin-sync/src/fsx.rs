@@ -344,15 +344,6 @@ impl Dir {
         check(unsafe { libc::fsync(self.raw()) }).map(drop)
     }
 
-    /// The device the directory is on, to tell whether a rename from elsewhere stays on it.
-    pub fn device(&self) -> io::Result<u64> {
-        // SAFETY: A zeroed `stat` is a valid out value.
-        let mut stat: libc::stat = unsafe { std::mem::zeroed() };
-        // SAFETY: A valid descriptor and out pointer.
-        check(unsafe { libc::fstat(self.raw(), &mut stat) })?;
-        Ok(stat.st_dev as u64)
-    }
-
     /// The file system's type name, such as `apfs`, `smbfs` or `nfs`.
     #[cfg(target_os = "macos")]
     pub fn fs_type(&self) -> io::Result<String> {

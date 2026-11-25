@@ -189,11 +189,17 @@ impl Engine {
         self.dataless = Some(Box::new(request));
     }
 
-    pub fn folder(&self) -> &Folder {
-        &self.folder
+    pub fn folder_path(&self) -> &std::path::Path {
+        self.folder.path()
     }
 
-    pub fn vault(&self) -> &VaultKey {
+    /// How the vault key travels: iCloud Keychain, or only the passphrase.
+    pub fn key_mode(&self) -> crate::vault::KeyMode {
+        self.header.mode
+    }
+
+    #[cfg(test)]
+    pub(crate) fn vault(&self) -> &VaultKey {
         &self.vault
     }
 
@@ -213,9 +219,18 @@ impl Engine {
         Ok(self.storage.device_id()?)
     }
 
+    /// One full pass over the vault, its header and the devices in it.
+    pub fn run(&mut self) -> Result<Report, Error> {
+        self.run_with(&[], &[])
+    }
+
     /// One full pass: every namespace in `namespaces` is imported and exported, and every name
     /// in `leaving` is left.
-    pub fn run(&mut self, namespaces: &[Namespace<'_>], leaving: &[&str]) -> Result<Report, Error> {
+    pub(crate) fn run_with(
+        &mut self,
+        namespaces: &[Namespace<'_>],
+        leaving: &[&str],
+    ) -> Result<Report, Error> {
         let mut report = Report::default();
         if !self.check_vault(&mut report)? {
             return Ok(report);

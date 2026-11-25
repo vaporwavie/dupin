@@ -444,13 +444,6 @@ impl Storage {
         vaults.push(key);
     }
 
-    pub fn release_vault_key(&self, id: [u8; ID_LEN], epoch: u32) {
-        self.vaults
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .retain(|held| (held.id, held.epoch) != (id, epoch));
-    }
-
     fn held_vaults(&self) -> Vec<VaultKey> {
         self.vaults
             .lock()

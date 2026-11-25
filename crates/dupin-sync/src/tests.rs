@@ -7,11 +7,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use dupin_storage::{Clock, DeviceId, Limits, MemoryKey, NewRecord, Storage, Store};
-use dupin_sync::{
-    DeviceInfo, Engine, Error, Folder, FolderOptions, Joined, KdfParams, KeyMode, MemoryKeys, Mode,
-    Namespace, Passphrase, Report,
-};
 use serde_json::json;
+
+use crate::keys::MemoryKeys;
+use crate::{
+    DeviceInfo, Engine, Error, Folder, FolderOptions, Joined, KdfParams, KeyMode, Mode, Namespace,
+    Passphrase, Report,
+};
 
 const DAY: Duration = Duration::from_secs(24 * 3600);
 const NAMESPACE: &str = "notes";
@@ -119,7 +121,7 @@ impl World {
 
     fn first(&self, name: &'static str) -> Device {
         self.device(name, |folder, storage, keys| {
-            dupin_sync::create(
+            crate::create(
                 folder,
                 storage.device_id().unwrap(),
                 &passphrase(),
@@ -133,7 +135,7 @@ impl World {
 
     fn joiner(&self, name: &'static str) -> Device {
         self.device(name, |folder, _, keys| {
-            dupin_sync::join(folder, Some(&passphrase()), keys, None).unwrap()
+            crate::join(folder, Some(&passphrase()), keys, None).unwrap()
         })
     }
 }
@@ -155,11 +157,11 @@ impl Device {
             mode: Mode::Lww,
             fold: None,
         };
-        self.engine.run(&[namespace], &[]).unwrap()
+        self.engine.run_with(&[namespace], &[]).unwrap()
     }
 
     fn leave(&mut self) -> Report {
-        self.engine.run(&[], &[NAMESPACE]).unwrap()
+        self.engine.run_with(&[], &[NAMESPACE]).unwrap()
     }
 
     fn set(&self, key: &str, value: &str) {
@@ -502,7 +504,7 @@ fn links_in_the_folder_are_never_followed() {
     a.set("mine", "must not leak");
     let result = {
         let store = a.store.as_ref().unwrap();
-        a.engine.run(
+        a.engine.run_with(
             &[Namespace {
                 name: NAMESPACE,
                 store,
@@ -543,7 +545,7 @@ fn a_wrong_passphrase_or_a_downgraded_kdf_is_refused_without_changes() {
     let folder = world.open_folder("b");
     let keys = MemoryKeys::default();
     assert!(matches!(
-        dupin_sync::join(
+        crate::join(
             &folder,
             Some(&Passphrase::entered("not the passphrase")),
             &keys,
@@ -552,7 +554,7 @@ fn a_wrong_passphrase_or_a_downgraded_kdf_is_refused_without_changes() {
         Err(Error::WrongPassphrase)
     ));
     assert!(matches!(
-        dupin_sync::join(&folder, None, &keys, None),
+        crate::join(&folder, None, &keys, None),
         Err(Error::KeyUnavailable)
     ));
     assert_eq!(std::fs::read(world.folder.join("vault.dupin")).unwrap(), header);
@@ -565,10 +567,10 @@ fn a_wrong_passphrase_or_a_downgraded_kdf_is_refused_without_changes() {
     );
     std::fs::write(world.folder.join("vault.dupin"), &downgraded).unwrap();
     assert!(matches!(
-        dupin_sync::join(&folder, Some(&passphrase()), &keys, None),
+        crate::join(&folder, Some(&passphrase()), &keys, None),
         Err(Error::UnacceptableKdf(_))
     ));
-    assert!(dupin_sync::join(&folder, Some(&passphrase()), &keys, None).is_err());
+    assert!(crate::join(&folder, Some(&passphrase()), &keys, None).is_err());
 }
 
 #[test]
@@ -594,7 +596,7 @@ fn creating_a_second_vault_in_a_claimed_folder_is_refused() {
     let storage = world.storage("b", MemoryKey::random());
     let folder = world.open_folder("b");
     assert!(matches!(
-        dupin_sync::create(
+        crate::create(
             &folder,
             storage.device_id().unwrap(),
             &passphrase(),
@@ -602,10 +604,10 @@ fn creating_a_second_vault_in_a_claimed_folder_is_refused() {
             &MemoryKeys::default(),
             None
         ),
-        Err(Error::Refused(dupin_sync::Refusal::HoldsAVault))
+        Err(Error::Refused(crate::Refusal::HoldsAVault))
     ));
     assert!(matches!(
-        dupin_sync::create(
+        crate::create(
             &folder,
             storage.device_id().unwrap(),
             &Passphrase::entered("unchecked passphrase"),
@@ -643,7 +645,7 @@ fn competing_vaults_settle_on_the_lowest_id() {
         );
     }
     let joiner = world.open_folder("d");
-    let joined = dupin_sync::join(&joiner, Some(&passphrase()), &MemoryKeys::default(), None);
+    let joined = crate::join(&joiner, Some(&passphrase()), &MemoryKeys::default(), None);
     if c_id < a_id {
         assert_eq!(joined.unwrap().key.id(), c_id, "a new Mac joins the winner");
     } else {
@@ -678,7 +680,7 @@ fn a_clock_far_ahead_is_named_and_held() {
     );
     let b_folder = world.open_folder("b");
     let keys = MemoryKeys::default();
-    let joined = dupin_sync::join(&b_folder, Some(&passphrase()), &keys, None).unwrap();
+    let joined = crate::join(&b_folder, Some(&passphrase()), &keys, None).unwrap();
     let b_store = b_storage
         .open_synced(NAMESPACE, Limits::default(), &joined.key)
         .unwrap();
@@ -701,7 +703,7 @@ fn a_clock_far_ahead_is_named_and_held() {
         )
         .unwrap();
     b_engine
-        .run(
+        .run_with(
             &[Namespace {
                 name: NAMESPACE,
                 store: &b_store,
@@ -802,7 +804,7 @@ fn a_cloned_data_directory_takes_a_new_device_id() {
     let world = World::new();
     let key = MemoryKey::random();
     let mut a = world.device_with("a", key.clone(), |folder, storage, keys| {
-        dupin_sync::create(
+        crate::create(
             folder,
             storage.device_id().unwrap(),
             &passphrase(),
@@ -822,7 +824,7 @@ fn a_cloned_data_directory_takes_a_new_device_id() {
             .unwrap(),
     );
     let mut clone = world.device_with("clone", key, |folder, _, keys| {
-        dupin_sync::join(folder, Some(&passphrase()), keys, None).unwrap()
+        crate::join(folder, Some(&passphrase()), keys, None).unwrap()
     });
     assert_eq!(clone.id(), a.id());
     world.clock.advance(Duration::from_secs(1));
@@ -844,7 +846,7 @@ fn icloud_keychain_mode_joins_without_the_passphrase_and_keeps_a_backup() {
     let shared = MemoryKeys::default();
     let storage = world.storage("a", MemoryKey::random());
     let folder = world.open_folder("a");
-    let created = dupin_sync::create(
+    let created = crate::create(
         &folder,
         storage.device_id().unwrap(),
         &passphrase(),
@@ -857,11 +859,11 @@ fn icloud_keychain_mode_joins_without_the_passphrase_and_keeps_a_backup() {
     assert!(created.header.has_passphrase());
     let joiner = world.open_folder("b");
     let local = MemoryKeys::default();
-    let joined = dupin_sync::join(&joiner, None, &local, Some(&shared)).unwrap();
+    let joined = crate::join(&joiner, None, &local, Some(&shared)).unwrap();
     assert_eq!(joined.key.key().as_bytes(), created.key.key().as_bytes());
-    let resumed = dupin_sync::resume(joined.key.id(), 1, Some(&joiner), &local).unwrap();
+    let resumed = crate::resume(joined.key.id(), 1, Some(&joiner), &local).unwrap();
     assert_eq!(resumed.key.key().as_bytes(), created.key.key().as_bytes());
-    let backup = dupin_sync::join(&joiner, Some(&passphrase()), &MemoryKeys::default(), None).unwrap();
+    let backup = crate::join(&joiner, Some(&passphrase()), &MemoryKeys::default(), None).unwrap();
     assert_eq!(backup.key.key().as_bytes(), created.key.key().as_bytes());
 }
 
@@ -872,7 +874,7 @@ fn the_folder_cannot_be_the_data_directory() {
     std::fs::create_dir_all(data.join("storage")).unwrap();
     assert!(matches!(
         Folder::open(&data.join("storage/sync"), &data, FolderOptions::default()),
-        Err(Error::Refused(dupin_sync::Refusal::InsideDataDirectory))
+        Err(Error::Refused(crate::Refusal::InsideDataDirectory))
     ));
 }
 

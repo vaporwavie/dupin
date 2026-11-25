@@ -148,6 +148,7 @@ pub struct Ui {
     calendar_access: dupin_mac::privacy::CalendarAccess,
     _apps_watcher: Option<AppsWatcher>,
     pub(crate) clipboard: crate::clipboard::Clipboard,
+    sync: crate::sync::Sync,
     saver: crate::store::Saver,
     position: Position,
     display: DisplaySelection,
@@ -324,6 +325,10 @@ impl Ui {
             calendar_access,
             _apps_watcher: apps_watcher,
             clipboard,
+            sync: match rune::tooling::is_headless() {
+                true => crate::sync::Sync::disabled(),
+                false => crate::sync::Sync::start(&config.sync),
+            },
             position: config.position,
             display: config.display,
             display_notice: None,

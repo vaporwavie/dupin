@@ -80,17 +80,17 @@ impl Folder {
         })
     }
 
-    pub fn path(&self) -> &Path {
+    pub(crate) fn path(&self) -> &Path {
         &self.path
     }
 
-    pub fn root(&self) -> &Dir {
+    pub(crate) fn root(&self) -> &Dir {
         &self.root
     }
 
     /// Every vault header in the folder root: `vault.dupin` and the copies sync tools make of
     /// it, the one place Dupin reads names outside its grammar.
-    pub fn headers(&self) -> Result<Vec<FoundHeader>, Error> {
+    pub(crate) fn headers(&self) -> Result<Vec<FoundHeader>, Error> {
         let mut headers = Vec::new();
         for entry in self.root.entries()? {
             if entry.kind != Kind::File || !entry.name.starts_with("vault") || !entry.name.ends_with(".dupin")
@@ -111,7 +111,7 @@ impl Folder {
     }
 
     /// Headers that parse.
-    pub fn parsed_headers(&self) -> Result<Vec<VaultHeader>, Error> {
+    pub(crate) fn parsed_headers(&self) -> Result<Vec<VaultHeader>, Error> {
         Ok(self
             .headers()?
             .into_iter()
@@ -121,12 +121,12 @@ impl Folder {
 
     /// This device's staging directory, `tmp.nosync/<device id>/`, which iCloud Drive never
     /// uploads. Writes are staged here so their rename stays on the folder's volume.
-    pub fn staging(&self, device: DeviceId) -> Result<Dir, Error> {
+    pub(crate) fn staging(&self, device: DeviceId) -> Result<Dir, Error> {
         Ok(self.root.create_dir(STAGING)?.create_dir(&device.to_string())?)
     }
 
     /// Writes the first vault header; fails if any header is already there.
-    pub fn create_header(&self, header: &VaultHeader, device: DeviceId) -> Result<(), Error> {
+    pub(crate) fn create_header(&self, header: &VaultHeader, device: DeviceId) -> Result<(), Error> {
         if !self.parsed_headers()?.is_empty() {
             return Err(Error::Refused(Refusal::HoldsAVault));
         }

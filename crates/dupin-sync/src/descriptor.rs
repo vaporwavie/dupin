@@ -145,7 +145,7 @@ mod tests {
             ..Descriptor::default()
         };
         descriptor.acks.entry("ns".into()).or_default().insert(Ack {
-            id: RecordId::CLEAR,
+            id: "0".repeat(32).parse().unwrap(),
             stamp: Stamp { hlc: 7, device: me },
         });
         let sealed = descriptor.seal(&vault, me);

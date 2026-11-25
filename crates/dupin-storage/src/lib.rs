@@ -14,7 +14,6 @@ mod secret;
 mod store;
 mod sweeper;
 
-pub use crypto::ID_LEN;
 pub use device::{DeviceId, Stamp};
 pub use error::Error;
 pub use fs::scratch_process;

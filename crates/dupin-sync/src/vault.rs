@@ -27,9 +27,9 @@ const SALT_LEN: usize = 16;
 /// Argon2id cost, as stored in the header.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct KdfParams {
-    pub memory_kib: u32,
-    pub iterations: u32,
-    pub parallelism: u32,
+    pub(crate) memory_kib: u32,
+    pub(crate) iterations: u32,
+    pub(crate) parallelism: u32,
 }
 
 impl KdfParams {
@@ -40,19 +40,19 @@ impl KdfParams {
         parallelism: 4,
     };
     /// Joining refuses anything cheaper, so a tampered header can't downgrade the derivation.
-    pub const FLOOR: KdfParams = KdfParams {
+    pub(crate) const FLOOR: KdfParams = KdfParams {
         memory_kib: 64 * 1024,
         iterations: 3,
         parallelism: 1,
     };
     /// And anything this expensive, so a tampered header can't exhaust memory or time.
-    pub const CEILING: KdfParams = KdfParams {
+    pub(crate) const CEILING: KdfParams = KdfParams {
         memory_kib: 1024 * 1024,
         iterations: 16,
         parallelism: 16,
     };
 
-    pub fn check(&self) -> Result<(), Error> {
+    pub(crate) fn check(&self) -> Result<(), Error> {
         let refuse = |why: String| Err(Error::UnacceptableKdf(why));
         if self.memory_kib < Self::FLOOR.memory_kib || self.iterations < Self::FLOOR.iterations {
             return refuse(format!(
@@ -170,16 +170,16 @@ fn parse_hex_vec(text: &str) -> Option<Vec<u8>> {
 /// or unwrapping with the passphrase, proves it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VaultHeader {
-    pub id: [u8; 16],
-    pub epoch: u32,
-    pub mode: KeyMode,
+    pub(crate) id: [u8; 16],
+    pub(crate) epoch: u32,
+    pub(crate) mode: KeyMode,
     kdf: Option<(KdfParams, [u8; SALT_LEN])>,
     wrapped: Option<Sealed>,
     check: Sealed,
 }
 
 impl VaultHeader {
-    pub fn parse(bytes: &[u8]) -> Result<Self, Error> {
+    pub(crate) fn parse(bytes: &[u8]) -> Result<Self, Error> {
         let bad = |why: &str| Error::BadHeader(why.to_owned());
         if bytes.len() as u64 > MAX_HEADER_BYTES {
             return Err(bad("too large"));
@@ -242,7 +242,7 @@ impl VaultHeader {
         })
     }
 
-    pub fn encode(&self) -> Vec<u8> {
+    pub(crate) fn encode(&self) -> Vec<u8> {
         let json = HeaderJson {
             vault: hex(&self.id),
             epoch: self.epoch,
@@ -265,11 +265,8 @@ impl VaultHeader {
         out
     }
 
-    pub fn kdf(&self) -> Option<KdfParams> {
-        self.kdf.map(|(params, _)| params)
-    }
-
-    pub fn has_passphrase(&self) -> bool {
+    #[cfg(test)]
+    pub(crate) fn has_passphrase(&self) -> bool {
         self.wrapped.is_some()
     }
 
@@ -310,7 +307,7 @@ impl VaultHeader {
 
     /// Whether `key` is this vault's key: the sealed check, which authenticates every field of
     /// the header, opens under it.
-    pub fn verify(&self, key: &VaultKey) -> bool {
+    pub(crate) fn verify(&self, key: &VaultKey) -> bool {
         if key.id() != self.id || key.epoch() != self.epoch {
             return false;
         }
@@ -327,7 +324,7 @@ impl VaultHeader {
     /// Unwraps the vault key with the passphrase. The derivation's cost is checked against
     /// [`KdfParams::FLOOR`] and [`KdfParams::CEILING`] first, and the unwrapped key must also
     /// open the header's check.
-    pub fn unwrap(&self, passphrase: &Passphrase) -> Result<VaultKey, Error> {
+    pub(crate) fn unwrap(&self, passphrase: &Passphrase) -> Result<VaultKey, Error> {
         let (Some((params, salt)), Some(wrapped)) = (self.kdf, &self.wrapped) else {
             return Err(Error::KeyUnavailable);
         };
@@ -344,7 +341,7 @@ impl VaultHeader {
     }
 
     /// A new header for `key`, with the key wrapped under `passphrase` when one is given.
-    pub fn new(
+    pub(crate) fn new(
         key: &VaultKey,
         mode: KeyMode,
         passphrase: Option<(&Passphrase, KdfParams)>,

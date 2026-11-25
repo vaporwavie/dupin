@@ -20,10 +20,10 @@ pub struct Version {
     pub stamp: Stamp,
     pub deleted: bool,
     /// Only on the clear marker: every version stamped before this is cleared.
-    pub clear_before: Option<Stamp>,
+    pub(crate) clear_before: Option<Stamp>,
     pub blobs: Vec<BlobRef>,
     /// Live, but a blob it uses has not arrived.
-    pub pending: bool,
+    pub(crate) pending: bool,
 }
 
 impl Version {
@@ -58,21 +58,7 @@ pub enum Imported {
     Expired,
 }
 
-impl RecordId {
-    /// The clear marker's reserved ID.
-    pub const CLEAR: RecordId = RecordId::CLEAR_MARKER;
-
-    pub fn as_bytes(&self) -> &[u8; 16] {
-        &self.0
-    }
-}
-
 impl Store {
-    /// Whether this namespace was opened with [`super::Storage::open_synced`].
-    pub fn is_synced(&self) -> bool {
-        self.state().synced
-    }
-
     /// The name a synced folder knows this namespace by: a keyed hash of its name, so the
     /// folder never shows which namespaces sync.
     pub fn namespace_id(&self) -> String {
@@ -303,16 +289,5 @@ impl Store {
             }
         }
         Ok(ahead)
-    }
-
-    /// Whether a live or pending version uses the blob.
-    pub fn blob_in_use(&self, handle: &BlobHandle) -> bool {
-        let state = self.state();
-        state
-            .records
-            .values()
-            .chain(state.pending.values())
-            .flat_map(|meta| &meta.blobs)
-            .any(|blob| blob.handle == *handle)
     }
 }

@@ -27,6 +27,8 @@ mod shader;
 mod snapshots;
 mod store;
 mod symbols;
+mod sync;
+mod sync_cli;
 mod trace;
 mod ui;
 mod update;

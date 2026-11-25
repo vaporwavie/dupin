@@ -15,14 +15,13 @@ mod seal;
 mod setup;
 mod vault;
 
-pub use descriptor::{Ack, Descriptor};
-pub use engine::{
-    BLOB_UNREFERENCED_FOR, DeviceInfo, DeviceStatus, Engine, Fold, INACTIVE_AFTER, MAX_DRIFT, Mode,
-    Namespace, Report, TOMBSTONE_MIN_AGE,
-};
+#[cfg(test)]
+mod tests;
+
+pub use engine::{DeviceInfo, DeviceStatus, Engine, Fold, Mode, Namespace, Report};
 pub use error::{Error, Refusal};
 pub use folder::{Folder, FolderOptions, icloud_drive_default};
-pub use keys::{FileVaultKeys, LocalKeyStore, MemoryKeys, SharedKeyStore, account};
-pub use passphrase::{GENERATED_WORDS, MIN_CHARS, Passphrase, Weakness};
+pub use keys::{LocalKeyStore, SharedKeyStore, account};
+pub use passphrase::{Passphrase, Weakness};
 pub use setup::{Joined, create, join, resume};
-pub use vault::{HEADER_NAME, KdfParams, KeyMode, VaultHeader};
+pub use vault::{KdfParams, KeyMode, VaultHeader};
