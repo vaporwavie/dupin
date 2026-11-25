@@ -393,7 +393,12 @@ impl Worker {
         }
         let (own, others) = self.read_usage();
         self.others = others.clone();
-        (self.notify)(UsageUpdate::Loaded { own, others });
+        // Reopened under another key, the store holds what the UI has already saved, so only
+        // the first open hands this Mac's log over.
+        match migrate {
+            true => (self.notify)(UsageUpdate::Loaded { own, others }),
+            false => (self.notify)(UsageUpdate::Others(others)),
+        }
     }
 
     /// `history.json` from before usage history moved into encrypted storage becomes this
