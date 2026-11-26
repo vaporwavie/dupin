@@ -52,7 +52,16 @@ export const sections = [
 	{
 		title: 'Your own extensions',
 		intro: 'Write, install and test extensions of your own.',
-		pages: ['features/extensions.md', 'features/cli.md', 'features/mcp.md'],
+		pages: [
+			'features/extensions.md',
+			'features/extension-manifest.md',
+			'features/extension-api.md',
+			'features/extension-permissions.md',
+			'features/extension-testing.md',
+			'features/extension-distribution.md',
+			'features/cli.md',
+			'features/mcp.md',
+		],
 	},
 	{ title: 'About', pages: ['philosophy.md', 'name.md'] },
 ] as const satisfies readonly { title: string; intro?: string; pages: readonly string[] }[];
