@@ -4,8 +4,8 @@ use serde::Serialize;
 use serde_json::{Map, Value};
 
 use crate::scope::{
-    ClipboardAccess, FilesAccess, FilesKind, MAX_EXEC_OUTPUT_BYTES, Method, Origin, RowKind, Scope, ScopeKey,
-    ScopeName, WindowsAccess,
+    ClipboardAccess, ContextAccess, FilesAccess, FilesKind, MAX_EXEC_OUTPUT_BYTES, Method, Origin, RowKind,
+    Scope, ScopeKey, ScopeName, WindowsAccess,
 };
 
 const MAX_HTTP: usize = 32;
@@ -77,6 +77,7 @@ impl Capabilities {
                     "snippets" => parser.snippets(value, &field),
                     "calendar" => parser.calendar(value, &field),
                     "windows" => parser.windows(value, &field),
+                    "context" => parser.context(value, &field),
                     "rows" => parser.rows(value, &field),
                     "query" => parser.query(value, &field),
                     _ => {
@@ -85,7 +86,7 @@ impl Capabilities {
                             field,
                             format!("`{name}` isn't a capability"),
                             Some(
-                                "Use http, files, exec, storage, clipboard, dictionary, calculator, snippets, calendar, windows, rows or query.",
+                                "Use http, files, exec, storage, clipboard, dictionary, calculator, snippets, calendar, windows, context, rows or query.",
                             ),
                         );
                         Vec::new()
@@ -810,6 +811,26 @@ impl Parser {
         .into_iter()
         .flatten()
         .map(|access| Scope::Windows { access })
+        .collect()
+    }
+
+    fn context(&mut self, value: &Value, field: &str) -> Vec<Scope> {
+        self.set(value, field, |parser, text, field| match text {
+            "frontmost" => Some(ContextAccess::Frontmost),
+            "document" => Some(ContextAccess::Document),
+            _ => {
+                parser.report(
+                    "invalid-value",
+                    field,
+                    format!("`{text}` isn't a context access"),
+                    Some("Use frontmost or document."),
+                );
+                None
+            }
+        })
+        .into_iter()
+        .flatten()
+        .map(|access| Scope::Context { access })
         .collect()
     }
 }

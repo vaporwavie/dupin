@@ -30,7 +30,7 @@ delete globalThis.__dupinHost;
 const invalidate = globalThis.__dupinInvalidate;
 delete globalThis.__dupinInvalidate;
 
-export const apiVersion = 4;
+export const apiVersion = 5;
 
 export const items = Object.freeze({
 	invalidate() {
@@ -277,6 +277,15 @@ export const windows = Object.freeze({
 	async setFrame(frame) {
 		const { x, y, width, height } = frame ?? {};
 		return (await call('windows.setFrame', { x, y, width, height })).frame;
+	},
+});
+
+export const context = Object.freeze({
+	async frontmost() {
+		return (await call('context.frontmost', {})).app;
+	},
+	async document() {
+		return (await call('context.document', {})).document;
 	},
 });
 "#;
