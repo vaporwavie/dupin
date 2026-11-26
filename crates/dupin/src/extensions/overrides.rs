@@ -15,7 +15,7 @@ use dupin_core::{CommandId, Config, Provider};
 use dupin_extension_bridge::services::{self, Services};
 use dupin_extension_bridge::{
     Bridge, ClipboardAccess, ConsentState, Failure, OsAccess, OsPermission, PackageId, Request, Scope,
-    Trigger, WindowsAccess,
+    StorageOp, Trigger, WindowsAccess,
 };
 use dupin_host_services::calendar;
 use dupin_storage::{Limits, MemoryKey, NewRecord, Storage};
@@ -69,6 +69,12 @@ fn case(name: &str) -> Option<Override> {
             None,
             Some(Use::Effect(Request::SnippetsWrite)),
         ),
+        // Its files and exec scopes are bound to paths, so only its storage ships granted.
+        "repo" => Override::extension(
+            "repo",
+            Some(Use::Effect(Request::Storage { op: StorageOp::Read })),
+        )
+        .ships_off(),
         "web-search" => Override::extension("web-search", None),
         "window-management" => Override::extension(
             "window-management",
