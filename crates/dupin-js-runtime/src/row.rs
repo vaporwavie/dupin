@@ -34,6 +34,8 @@ pub(crate) const MAX_METADATA_TEXT_BYTES: usize = 512;
 pub(crate) const MAX_ACTIONS: usize = 8;
 pub(crate) const MAX_ACTION_TITLE_BYTES: usize = 512;
 pub(crate) const MAX_HANDLER_BYTES: usize = 64;
+/// What a `search` action types into the main search.
+pub(crate) const MAX_SEARCH_BYTES: usize = 512;
 const MAX_DATA_BYTES: usize = 4096;
 const MAX_DATA_DEPTH: usize = 16;
 /// What a page holds for its view between calls.
@@ -218,6 +220,11 @@ pub enum RowEffect {
         view: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         state: Option<serde_json::Value>,
+    },
+    /// Types `query` into the main search in place of what the panel shows, as if the user had
+    /// typed it, so a keyword at its start opens that keyword's search.
+    Search {
+        query: String,
     },
 }
 
@@ -464,6 +471,7 @@ pub(crate) fn actions_text_bytes(actions: &[RowAction]) -> usize {
                     RowEffect::Copy { text } | RowEffect::Paste { text } => text.len(),
                     RowEffect::OpenUrl { url } => url.len(),
                     RowEffect::Reveal { path } => path.len(),
+                    RowEffect::Search { query } => query.len(),
                     RowEffect::Run { handler, data } => {
                         handler.len() + data.as_ref().map_or(0, |data| data.to_string().len())
                     }
@@ -575,6 +583,7 @@ pub(crate) fn validate_actions(actions: &[RowAction], source: Source) -> Result<
                 }
             }
             RowEffect::Reveal { path } => check_file(path)?,
+            RowEffect::Search { query } => line("actions.search", query, MAX_SEARCH_BYTES)?,
             RowEffect::Copy { .. } | RowEffect::Paste { .. } | RowEffect::OpenUrl { .. } => {}
         }
     }

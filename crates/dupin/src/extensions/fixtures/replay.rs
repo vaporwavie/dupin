@@ -549,7 +549,10 @@ impl Replayer<'_> {
                 done.presses = choose(index, &action);
                 done.problem = self.run(handler, data.as_ref().unwrap_or(&Value::Null), outcome, false);
             }
-            RowEffect::Copy { .. } | RowEffect::OpenUrl { .. } | RowEffect::Reveal { .. } => {}
+            RowEffect::Copy { .. }
+            | RowEffect::OpenUrl { .. }
+            | RowEffect::Reveal { .. }
+            | RowEffect::Search { .. } => {}
         }
         done
     }

@@ -1586,11 +1586,11 @@ impl<'a> Reader<'a> {
                 let key = key?;
                 match key.as_str() {
                     "title" | "data" | "alternate" | "confirm" | "needsFile" | "template" => {}
-                    "copy" | "paste" | "open" | "reveal" | "run" | "push" => kinds.push(key),
+                    "copy" | "paste" | "open" | "reveal" | "run" | "push" | "search" => kinds.push(key),
                     _ => {
                         return Err(self
                             .invalid("unknown-field", format!("{at}.{key}"), "is not an action field")
-                            .hint("An action takes `title` and one of `copy`, `paste`, `open`, `reveal`, `run` or `push`, with `data`, `alternate` and `confirm` for `run` and `template` for `copy` or `paste`.")
+                            .hint("An action takes `title` and one of `copy`, `paste`, `open`, `reveal`, `run`, `push` or `search`, with `data`, `alternate` and `confirm` for `run` and `template` for `copy` or `paste`.")
                             .into());
                     }
                 }
@@ -1603,7 +1603,7 @@ impl<'a> Reader<'a> {
                 })?;
             let [kind] = kinds.as_slice() else {
                 return Err(self
-                    .invalid("invalid-field", &at, "must have exactly one of `copy`, `paste`, `open`, `reveal`, `run` or `push`")
+                    .invalid("invalid-field", &at, "must have exactly one of `copy`, `paste`, `open`, `reveal`, `run`, `push` or `search`")
                     .hint("Give `{ title: \"Open\", open: \"https://…\" }` or `{ title: \"Delete\", run: \"remove\" }`.")
                     .into());
             };
@@ -1673,6 +1673,11 @@ impl<'a> Reader<'a> {
                     RowEffect::Reveal { path }
                 }
                 "push" => self.push(&action, &format!("{at}.push"))?,
+                "search" => RowEffect::Search {
+                    query: self
+                        .line(&action, &format!("{at}.search"), "search", row::MAX_SEARCH_BYTES)?
+                        .expect("present"),
+                },
                 _ => {
                     let field = format!("{at}.run");
                     let handler = self

@@ -353,6 +353,7 @@ An item's `actions` adds up to eight actions, counting the ones `url` and `text`
 | `reveal` | Shows the file in Finder.                                       |
 | `run`    | Calls `actions[run](data, ctx)` in the package.                 |
 | `push`   | Opens one of the package's [views](#views-and-forms) on a page. |
+| `search` | Types the text into the main search, such as `port 3000`.       |
 
 ```js
 export const actions = {
@@ -376,6 +377,7 @@ Each action has a one-line `title` of up to 512 bytes and exactly one of:
 | `reveal` | Shows the file at the absolute path selected in Finder; it opens nothing.                                                                                 |
 | `run`    | Calls `actions[run](data, ctx)` in the package.                                                                                                           |
 | `push`   | `{ view, state }`: opens `views[view](ctx)` on a [page](#views-and-forms) of its own, titled with the action's title, holding `state`.                    |
+| `search` | One line of up to 512 bytes, typed into the main search in place of what the panel shows; see [Handing over to a keyword](#handing-over-to-a-keyword).    |
 
 | Option      | On              | Does                                                                                    |
 | ----------- | --------------- | --------------------------------------------------------------------------------------- |
@@ -443,6 +445,17 @@ export const actions = {
 - Only a package that [declares](./extension-permissions.md#clipboard) `"clipboard": ["paste"]`, and that you allow to, may use a `paste` action; otherwise Dupin copies the text and says why.
 - A row whose first action pastes, and whose actions make none `alternate`, copies with ⌘Enter, through its first `copy` action.
 - The [actions you add to the `text` and `url` kinds](./advanced.md#kind-actions) in config.toml follow an item's own, on the first text it copies as written and the first URL it opens. They don't count towards the eight, the package never sees them, and an item's `file` takes none.
+
+</details>
+
+### Handing over to a keyword
+
+A `search` action types its text into the main search, as if you had typed it there, so a keyword at its start opens that keyword's search with the rest as its query: `{ title: 'Show Open Ports', search: 'port 3000' }` leaves whatever the panel showed for the Ports keyword, searching `3000`.
+
+<details>
+<summary>Which keywords a package may hand over to</summary>
+
+A package may search its own keyword, as `{ search: 'bm rust' }` from Bookmarks does. Only a package bundled with Dupin may name another keyword: the package that answers it receives the text, so any other package could pass on what it read to one that may send it elsewhere. Dupin leaves such an action out of the row and logs why. The search the action leaves, and any page open on it, isn't kept: it is as if you had typed the text afresh.
 
 </details>
 

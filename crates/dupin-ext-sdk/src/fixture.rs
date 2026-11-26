@@ -722,6 +722,7 @@ fn effect(effect: &RowEffect) -> Map<String, Value> {
         RowEffect::Reveal { path } => ("reveal", Value::from(path.clone())),
         RowEffect::Run { handler, data } => ("run", json!({"action": handler, "data": data})),
         RowEffect::Push { view, state } => ("push", json!({"view": view, "state": state})),
+        RowEffect::Search { query } => ("search", Value::from(query.clone())),
     };
     Map::from_iter([(key.to_owned(), value)])
 }

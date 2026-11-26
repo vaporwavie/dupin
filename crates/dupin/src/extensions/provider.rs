@@ -404,6 +404,24 @@ pub(crate) fn hand_over_kinds(kinds: Kinds) {
     let _ = KINDS.set(kinds);
 }
 
+/// Whether `extension` may offer a `search` action for `query`. Another package's search
+/// receives what it types, so only a package that ships with Dupin hands text to another
+/// package's keyword: any other could pass what it read to a package that may send it on. Its
+/// own keyword it may search again freely. A search it may not offer is left out of its row.
+fn searches_from(extension: &Extension, query: &str) -> bool {
+    let own = query
+        .strip_prefix(extension.keyword.as_str())
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with(' '));
+    let allowed = own || extension.package.as_str().starts_with(super::BUNDLED_PREFIX);
+    if !allowed {
+        crate::log::warn(&format!(
+            "extension {}: left out a search action for another package's keyword; only bundled extensions hand a query to another keyword",
+            extension.id
+        ));
+    }
+    allowed
+}
+
 type Refreshed = Box<dyn Fn(&PackageId) + Send + Sync>;
 static REFRESHED: OnceLock<Refreshed> = OnceLock::new();
 
@@ -506,8 +524,11 @@ fn row_item_with(kinds: &Kinds, extension: &Extension, row: Row, catalogue: bool
         }
     };
     let (mut texts, mut urls) = (false, false);
+    let offered = offered.into_iter().filter(|action| match &action.effect {
+        RowEffect::Search { query } => searches_from(extension, query),
+        _ => true,
+    });
     let mut actions: Vec<ItemAction> = offered
-        .into_iter()
         .enumerate()
         .map(|(index, action)| {
             let name = |taken: &mut bool, first: &str| {
@@ -581,6 +602,9 @@ fn row_item_with(kinds: &Kinds, extension: &Extension, row: Row, catalogue: bool
                         context: state,
                     }),
                 ),
+                RowEffect::Search { query } => {
+                    ItemAction::new(&format!("action-{index}"), &action.title, Action::Search(query))
+                }
             }
         })
         .collect();
@@ -1119,6 +1143,35 @@ mod tests {
         assert_eq!(rows[0].action("copy"), Some(&Action::Copy("2".into())));
         assert_eq!(rows[0].payload, Payload::text("2"));
         assert!(!rows[0].record_usage);
+    }
+
+    #[test]
+    fn only_a_bundled_package_hands_a_query_to_another_keyword() {
+        use dupin_js_runtime::row::RowAction;
+
+        let kinds = dupin_mac::kinds::native();
+        let searches = |extension: &Extension| {
+            let mut row = Row::new("a", "Row");
+            row.actions = ["proc 42", "proc", "port 42", "procs 42", "portable"]
+                .into_iter()
+                .map(|query| RowAction::new(query, RowEffect::Search { query: query.into() }))
+                .collect();
+            let item = row_item_with(&kinds, extension, row, false).item;
+            item.actions
+                .iter()
+                .map(|action| match item.action(&action.id) {
+                    Some(Action::Search(query)) => query.clone(),
+                    other => panic!("{other:?}"),
+                })
+                .collect::<Vec<_>>()
+        };
+        let mut guest = super::super::tests::extension("Proc", "proc");
+        assert_eq!(searches(&guest), ["proc 42", "proc"], "only its own keyword");
+        guest.package = PackageId::new("bundled:proc").unwrap();
+        assert_eq!(
+            searches(&guest),
+            ["proc 42", "proc", "port 42", "procs 42", "portable"]
+        );
     }
 
     #[test]

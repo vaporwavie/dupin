@@ -151,6 +151,14 @@ impl Session {
         effects
     }
 
+    /// Starts over in the main search with `text` typed, so a keyword at its start opens that
+    /// keyword's search, as typing it there would.
+    pub(super) fn search_main(&mut self, text: &str) -> Vec<Effect> {
+        let mut effects = self.start_over(None, None, "");
+        effects.extend(self.complete(text));
+        effects
+    }
+
     fn complete(&mut self, completion: &str) -> Vec<Effect> {
         let mut effects = self.set_query(completion);
         if let Some(Effect::ReplaceQuery(text)) = effects

@@ -87,6 +87,7 @@ impl Ui {
                     | Action::Browse(_)
                     | Action::Push(_)
                     | Action::Keyword(_)
+                    | Action::Search(_)
                     | Action::Rename(_)
                     | Action::ChooseDestination { .. } => {}
                     Action::RequestClipboardAccess => self.request_clipboard_access(),
