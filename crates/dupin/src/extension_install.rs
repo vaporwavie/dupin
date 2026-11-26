@@ -185,7 +185,7 @@ pub fn eject(name: &str) -> Result<PathBuf, Diagnostic> {
         &bundled,
         &user,
         crate::extensions::access::local_path().as_deref(),
-        crate::extensions::access::storage().as_ref(),
+        crate::extensions::access::shared_storage().as_deref(),
         name,
     )
 }
@@ -223,7 +223,7 @@ pub(crate) fn eject_into(
 /// package's namespace is named after its package name; revoking its `storage` in Settings
 /// keeps it. A running Dupin that has the package's data open deletes it itself.
 fn delete_data(name: &str) -> Result<(), Diagnostic> {
-    match crate::extensions::access::storage() {
+    match crate::extensions::access::shared_storage() {
         Some(storage) => delete_data_in(&storage, name),
         None => Ok(()),
     }

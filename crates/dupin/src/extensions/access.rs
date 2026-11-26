@@ -36,21 +36,21 @@ pub fn storage_path() -> Option<PathBuf> {
     crate::store::data_dir().map(|dir| dir.join("storage"))
 }
 
-/// Encrypted storage under the data key in the user's Keychain, which is read only when a
-/// namespace is first opened.
-pub fn storage() -> Option<dupin_storage::Storage> {
-    Some(dupin_storage::Storage::new(
-        storage_path()?,
-        dupin_mac::keychain::KeychainKey,
-    ))
-}
-
-/// The launcher's one [`storage`]: extensions' namespaces and the built-ins' own, such as
-/// stored snippets, share the device's clock and key, as a second root over the same folder
-/// would not.
+/// The launcher's one encrypted storage, under the data key in the user's Keychain, which is
+/// read only when a namespace is first opened. Extensions' namespaces and the built-ins' own,
+/// such as stored snippets and usage history, and sync share it, so the device's clock, ID and
+/// key have one owner, as a second root over the same folder would not.
 pub fn shared_storage() -> Option<Arc<dupin_storage::Storage>> {
-    static SHARED: OnceLock<Option<Arc<dupin_storage::Storage>>> = OnceLock::new();
-    SHARED.get_or_init(|| storage().map(Arc::new)).clone()
+    static STORAGE: OnceLock<Option<Arc<dupin_storage::Storage>>> = OnceLock::new();
+    STORAGE
+        .get_or_init(|| {
+            let storage = dupin_storage::Storage::new(storage_path()?, dupin_mac::keychain::KeychainKey);
+            Some(Arc::new(match dupin_mac::machine::platform_uuid() {
+                Some(uuid) => storage.with_hardware_id(uuid.as_bytes()),
+                None => storage,
+            }))
+        })
+        .clone()
 }
 
 /// What the platform services need from the launcher.
