@@ -88,6 +88,7 @@ fn an_approval_covers_the_same_or_a_narrower_declaration_only() {
         name: name("notes"),
         kind,
         access: access.iter().copied().collect(),
+        path: None,
     };
     assert!(
         files(FilesKind::Directory, &[FilesAccess::Read, FilesAccess::List])
@@ -106,6 +107,8 @@ fn an_approval_covers_the_same_or_a_narrower_declaration_only() {
         name: name("git"),
         args: args.iter().map(|arg| arg.to_string()).collect(),
         output,
+        program: None,
+        background: false,
     };
     assert!(exec(&["status"], true).covers(&exec(&["status"], false)));
     assert!(!exec(&["status"], false).covers(&exec(&["status"], true)));
@@ -192,6 +195,8 @@ fn exec_consent_shows_where_each_argument_starts_and_ends() {
             name: ScopeName::new("run").unwrap(),
             args: args.iter().map(|arg| (*arg).to_owned()).collect(),
             output: false,
+            program: None,
+            background: false,
         }
         .to_string()
     };

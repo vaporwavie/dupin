@@ -101,6 +101,9 @@ export const files = Object.freeze({
 	async list(scope, path = '', options = {}) {
 		return (await call('files.list', { scope, path, limit: options.limit })).entries;
 	},
+	async root(scope) {
+		return (await call('files.root', { scope })).path;
+	},
 });
 
 export const exec = Object.freeze({

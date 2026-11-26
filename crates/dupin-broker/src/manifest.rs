@@ -4,8 +4,8 @@ use serde::Serialize;
 use serde_json::{Map, Value};
 
 use crate::scope::{
-    ClipboardAccess, FilesAccess, FilesKind, Method, Origin, RowKind, Scope, ScopeKey, ScopeName,
-    WindowsAccess,
+    ClipboardAccess, DeclaredPath, FilesAccess, FilesKind, Method, Origin, RowKind, Scope, ScopeKey,
+    ScopeName, WindowsAccess,
 };
 
 const MAX_HTTP: usize = 32;
@@ -269,6 +269,31 @@ impl Parser {
         object.iter().map(|(name, value)| (name.clone(), value)).collect()
     }
 
+    /// A path the package names for a scope: absolute, or under the home folder when
+    /// `under_home` allows it.
+    fn declared_path(&mut self, value: &Value, field: &str, under_home: bool) -> Option<DeclaredPath> {
+        let Value::String(text) = value else {
+            self.wrong_type(field, "a string", value);
+            return None;
+        };
+        match DeclaredPath::new(text.as_str()) {
+            Ok(path) if path.under_home() && !under_home => {
+                self.report(
+                    "invalid-value",
+                    field,
+                    "a program is named by its absolute path",
+                    Some("Write the path from `/`, such as \"/usr/bin/git\"."),
+                );
+                None
+            }
+            Ok(path) => Some(path),
+            Err(message) => {
+                self.report("invalid-value", field, message, None);
+                None
+            }
+        }
+    }
+
     fn name(&mut self, name: &str, field: &str) -> Option<ScopeName> {
         ScopeName::new(name)
             .map_err(|message| self.report("invalid-name", field, message, None))
@@ -358,8 +383,13 @@ impl Parser {
         for (name, entry) in self.named(value, field) {
             let field = format!("{field}.{name}");
             let name = self.name(&name, &field);
-            let Some(object) = self.fields(entry, &field, &["kind", "access"], &["kind", "access"]) else {
+            let Some(object) = self.fields(entry, &field, &["kind", "access", "path"], &["kind", "access"])
+            else {
                 continue;
+            };
+            let path = match object.get("path") {
+                None => Some(None),
+                Some(path) => self.declared_path(path, &format!("{field}.path"), true).map(Some),
             };
             let kind = match object.get("kind") {
                 Some(Value::String(kind)) if kind == "file" => Some(FilesKind::File),
@@ -407,7 +437,7 @@ impl Parser {
                     },
                 )
             });
-            let (Some(name), Some(kind), Some(access)) = (name, kind, access) else {
+            let (Some(name), Some(kind), Some(access), Some(path)) = (name, kind, access, path) else {
                 continue;
             };
             if kind == FilesKind::File && access.contains(&FilesAccess::List) {
@@ -419,7 +449,12 @@ impl Parser {
                 );
                 continue;
             }
-            scopes.push(Scope::Files { name, kind, access });
+            scopes.push(Scope::Files {
+                name,
+                kind,
+                access,
+                path,
+            });
         }
         scopes
     }
@@ -440,15 +475,33 @@ impl Parser {
                 continue;
             }
             let name = self.name(&key, &field);
-            let Some(object) = self.fields(entry, &field, &["args", "output"], &["args"]) else {
+            let Some(object) = self.fields(
+                entry,
+                &field,
+                &["args", "output", "program", "background"],
+                &["args"],
+            ) else {
                 continue;
             };
             let output = self.boolean(object.get("output"), &format!("{field}.output"));
+            let background = self.boolean(object.get("background"), &format!("{field}.background"));
+            let program = match object.get("program") {
+                None => Some(None),
+                Some(program) => self
+                    .declared_path(program, &format!("{field}.program"), false)
+                    .map(Some),
+            };
             let args = object
                 .get("args")
                 .and_then(|args| self.args(args, &format!("{field}.args")));
-            if let (Some(name), Some(args)) = (name, args) {
-                scopes.push(Scope::Exec { name, args, output });
+            if let (Some(name), Some(args), Some(program)) = (name, args, program) {
+                scopes.push(Scope::Exec {
+                    name,
+                    args,
+                    output,
+                    program,
+                    background,
+                });
             }
         }
         scopes

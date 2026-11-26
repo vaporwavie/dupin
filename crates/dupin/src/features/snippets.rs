@@ -389,6 +389,7 @@ mod tests {
                     Instant::now() + QUERY_DEADLINE,
                     &dupin_extension_bridge::Call::none(),
                     Role::Keyword,
+                    None,
                 )
                 .unwrap_or_else(|error| panic!("{count} snippets: {error:?}"));
             assert_eq!(

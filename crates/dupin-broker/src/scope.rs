@@ -79,6 +79,43 @@ string_type!(ScopeName, |value| {
     }
 });
 
+string_type!(DeclaredPath, |value| {
+    let relative = if let Some(rest) = value.strip_prefix("~/") {
+        rest
+    } else if let Some(rest) = value.strip_prefix('/') {
+        rest
+    } else {
+        return Err("a path starts with `/` or `~/`".into());
+    };
+    if value.len() > 1024 || !displayable(value) {
+        return Err("a path is at most 1024 bytes with no control or invisible formatting characters".into());
+    }
+    if relative.is_empty() || relative.ends_with('/') {
+        return Err("a path names a file or folder, without a trailing `/`".into());
+    }
+    if relative
+        .split('/')
+        .any(|part| part.is_empty() || part == "." || part == "..")
+    {
+        return Err("a path has no empty, `.` or `..` parts".into());
+    }
+    Ok(())
+});
+
+impl DeclaredPath {
+    /// The absolute path, with a leading `~/` under `home`.
+    pub fn resolve(&self, home: &std::path::Path) -> std::path::PathBuf {
+        match self.0.strip_prefix("~/") {
+            Some(rest) => home.join(rest),
+            None => std::path::PathBuf::from(&self.0),
+        }
+    }
+
+    pub fn under_home(&self) -> bool {
+        self.0.starts_with("~/")
+    }
+}
+
 /// An HTTPS origin: a lowercase DNS host and an optional port other than 443.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
@@ -385,11 +422,23 @@ pub enum Scope {
         name: ScopeName,
         kind: FilesKind,
         access: BTreeSet<FilesAccess>,
+        /// The file or folder the package names, absolute or under `~/`, which Dupin binds the
+        /// scope to when the user allows it instead of asking them to pick one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        path: Option<DeclaredPath>,
     },
     Exec {
         name: ScopeName,
         args: Vec<String>,
         output: bool,
+        /// The absolute path of the program the package names, which Dupin binds the profile
+        /// to when the user allows it instead of asking them to pick one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        program: Option<DeclaredPath>,
+        /// The profile may run without an action the user chose: while they type, in
+        /// `items()` and in event handlers.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        background: bool,
     },
     Script {
         name: ScopeName,
@@ -459,21 +508,35 @@ impl Scope {
                 },
             ) => origin == o && methods.is_superset(m),
             (
-                Self::Files { name, kind, access },
+                Self::Files {
+                    name,
+                    kind,
+                    access,
+                    path,
+                },
                 Self::Files {
                     name: n,
                     kind: k,
                     access: a,
+                    path: p,
                 },
-            ) => name == n && kind == k && access.is_superset(a),
+            ) => name == n && kind == k && access.is_superset(a) && path == p,
             (
-                Self::Exec { name, args, output },
+                Self::Exec {
+                    name,
+                    args,
+                    output,
+                    program,
+                    background,
+                },
                 Self::Exec {
                     name: n,
                     args: a,
                     output: o,
+                    program: p,
+                    background: b,
                 },
-            ) => name == n && args == a && (*output || !o),
+            ) => name == n && args == a && (*output || !o) && program == p && (*background || !b),
             (Self::Script { name, output }, Self::Script { name: n, output: o }) => {
                 name == n && (*output || !o)
             }
@@ -532,9 +595,25 @@ impl Scope {
         }
     }
 
-    /// Files and executable profiles are bound, at consent, to a path the user picks.
+    /// Files and executable profiles are bound, at consent, to a path: the one the package
+    /// declares, or one the user picks.
     pub fn needs_binding(&self) -> bool {
         matches!(self, Self::Files { .. } | Self::Exec { .. })
+    }
+
+    /// The path the package declares for a files scope or an executable profile, which the
+    /// scope is bound to without a pick.
+    pub fn declared_path(&self) -> Option<&DeclaredPath> {
+        match self {
+            Self::Files { path, .. } => path.as_ref(),
+            Self::Exec { program, .. } => program.as_ref(),
+            _ => None,
+        }
+    }
+
+    /// Whether the user must pick the path the scope is bound to.
+    pub fn needs_pick(&self) -> bool {
+        self.needs_binding() && self.declared_path().is_none()
     }
 }
 
@@ -558,7 +637,12 @@ impl fmt::Display for Scope {
             Self::Http { origin, methods } => {
                 write!(f, "{} requests to {origin}", list(methods, |m| m.as_str()))
             }
-            Self::Files { name, kind, access } => {
+            Self::Files {
+                name,
+                kind,
+                access,
+                path,
+            } => {
                 let kind = match kind {
                     FilesKind::File => "file",
                     FilesKind::Directory => "folder",
@@ -567,16 +651,31 @@ impl fmt::Display for Scope {
                     FilesAccess::Read => "read",
                     FilesAccess::List => "list",
                 });
-                write!(f, "{access} the {kind} you pick for “{name}”")
+                match path {
+                    Some(path) => write!(f, "{access} the {kind} {path}"),
+                    None => write!(f, "{access} the {kind} you pick for “{name}”"),
+                }
             }
-            Self::Exec { name, args, output } => {
-                write!(f, "run the program you pick for “{name}”")?;
+            Self::Exec {
+                name,
+                args,
+                output,
+                program,
+                background,
+            } => {
+                match program {
+                    Some(program) => write!(f, "run {program}")?,
+                    None => write!(f, "run the program you pick for “{name}”")?,
+                }
                 for (index, arg) in args.iter().enumerate() {
                     f.write_str(if index == 0 { " with " } else { " " })?;
                     write!(f, "{arg:?}")?;
                 }
                 if *output {
                     f.write_str(" and read its output")?;
+                }
+                if *background {
+                    f.write_str(", even while you type and without an action you chose")?;
                 }
                 Ok(())
             }

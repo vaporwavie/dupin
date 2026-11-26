@@ -1536,3 +1536,124 @@ fn a_search_may_read_windows_but_only_a_chosen_action_moves_one() {
         [dupin_host_services::windows::Frame::new(0.0, 25.0, 720.0, 875.0)]
     );
 }
+
+#[test]
+fn a_declared_folder_is_bound_without_a_pick_and_a_missing_one_asks_nothing() {
+    dupin_extension_host::skip_inside_a_sandbox!();
+    let world = world(
+        serde_json::json!({ "files": {
+            "code": { "kind": "directory", "access": ["list"], "path": "~/code" },
+            "gone": { "kind": "directory", "access": ["list"], "path": "~/gone" }
+        } }),
+        &guest(
+            "export async function search() {
+               return [{ title: (await Promise.all([
+                 report(() => files.root('code')),
+                 report(() => files.list('code').then((entries) => entries.map((entry) => entry.name))),
+                 report(() => files.root('gone')),
+                 report(() => files.list('gone')),
+               ])).join(' | ') }];
+             }",
+        ),
+    );
+    let home = world.folder.path().join("home");
+    std::fs::create_dir_all(home.join("code/dupin")).unwrap();
+    world.bridge.set_home(Some(home.clone()));
+    world.enable();
+    assert_eq!(
+        world.first(""),
+        "needs-consent | needs-consent | not-found | not-found"
+    );
+    let pending = world.bridge.pending(Some(&world.id));
+    assert_eq!(
+        pending.iter().map(ConsentRequest::key).collect::<Vec<_>>(),
+        ["files:code".parse::<ScopeKey>().unwrap()],
+        "a folder the Mac doesn't have is never asked about"
+    );
+    assert!(!pending[0].needs_pick());
+    assert_eq!(pending[0].description, "list the folder ~/code");
+    world
+        .bridge
+        .allow(&world.id, &pending[0].revision, &pending[0].scope, None)
+        .unwrap();
+    let root = home.join("code");
+    assert_eq!(
+        world.first(""),
+        format!(
+            "ok {} | ok [\"dupin\"] | not-found | not-found",
+            serde_json::Value::from(root.to_str().unwrap())
+        )
+    );
+    world.bridge.show_root_as(root, "/Users/dupin/code".into());
+    assert!(world.first("").starts_with("ok \"/Users/dupin/code\" |"));
+}
+
+#[test]
+fn the_root_of_a_scope_needs_its_grant() {
+    dupin_extension_host::skip_inside_a_sandbox!();
+    let world = world(
+        serde_json::json!({ "files": { "notes": { "kind": "directory", "access": ["read"] } } }),
+        &guest(
+            "export async function search() { return [{ title: await report(() => files.root('notes')) }]; }",
+        ),
+    );
+    world.enable();
+    assert_eq!(world.first(""), "needs-consent");
+    world.grant("files:notes");
+    assert_eq!(
+        world.first(""),
+        format!(
+            "ok {}",
+            serde_json::Value::from(world.folder.path().to_str().unwrap())
+        )
+    );
+    world
+        .bridge
+        .revoke(&world.id, &"files:notes".parse().unwrap())
+        .unwrap();
+    assert_eq!(world.first(""), "revoked");
+}
+
+#[test]
+fn only_a_background_profile_runs_while_typing_and_never_outlives_its_call() {
+    dupin_extension_host::skip_inside_a_sandbox!();
+    let world = world(
+        serde_json::json!({ "exec": {
+            "status": { "program": "/usr/bin/git", "args": ["-C", "{path}", "status"], "output": true, "background": true },
+            "push": { "program": "/usr/bin/git", "args": ["-C", "{path}", "push"] }
+        } }),
+        &guest(
+            "export async function search() {
+               return [{ title: (await Promise.all([
+                 report(() => exec.run('status', { path: '/repo' }).then((result) => result.stdout.trim())),
+                 report(() => exec.run('push', { path: '/repo' })),
+               ])).join(' | ') }];
+             }",
+        ),
+    );
+    world.enable();
+    for key in ["exec:status", "exec:push"] {
+        let key: ScopeKey = key.parse().unwrap();
+        let scope = world
+            .bridge
+            .scopes(&world.id)
+            .into_iter()
+            .find(|entry| entry.scope.key() == key)
+            .unwrap()
+            .scope;
+        assert!(!scope.needs_pick(), "the program is the one the package names");
+        world.bridge.allow(&world.id, &revision(), &scope, None).unwrap();
+    }
+    assert_eq!(world.first(""), "ok \"clean\" | needs-activation");
+    let launches = world.exec.launches.lock().unwrap();
+    assert_eq!(launches.len(), 1);
+    assert_eq!(
+        launches[0].0,
+        dupin_host_services::exec::Target::Executable("/usr/bin/git".into())
+    );
+    assert!(
+        launches[0].1 < Duration::from_secs(5),
+        "the command times out before the call's deadline: {:?}",
+        launches[0].1
+    );
+}

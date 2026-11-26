@@ -112,7 +112,7 @@ export function items() {
 <details>
 <summary>How the catalogue is listed and ranked</summary>
 
-`items` returns an array of items, or a list with `items` or `sections` as for `search`. It runs on first use, and again only after its `ttl` or when one of its actions or event handlers invalidates it.
+`items` returns an array of items, or a list with `items` or `sections` as for `search`. It runs on first use, and again only after its `ttl` or when one of its actions or event handlers invalidates it. Once only its `ttl` has passed, Dupin keeps matching the rows it holds while it asks again in the background, and takes the answer unless something invalidated the catalogue meanwhile, so typing never waits for it.
 
 Typing the keyword and Space (such as `bm`) lists the catalogue in its own order, under its sections. Typing more ranks every item by how well its title or keywords match, as apps are ranked, and puts the items you pick most often for that query first; the headings then give way to one ranked list.
 
@@ -169,7 +169,7 @@ A change of preferences drops the catalogue, so the next use lists it with them.
 <details>
 <summary>What items may use</summary>
 
-`items` reaches host services as `search` does. It runs while you type, never because you chose an action, so it may use what you allowed that needs no action of yours (files, GET and HEAD, the dictionary, calendars and `storage`, whose writes and deletes need none either), and anything that needs an action you chose, such as reading the clipboard, fails with `needs-activation`. A request that needs consent shows its question under the keyword.
+`items` reaches host services as `search` does. It runs while you type, never because you chose an action, so it may use what you allowed that needs no action of yours (files, GET and HEAD, the dictionary, calendars, `storage`, whose writes and deletes need none either, and programs whose profile is declared `background`), and anything that needs an action you chose, such as reading the clipboard, fails with `needs-activation`. A request that needs consent shows its question under the keyword.
 
 A catalogue belongs to the access it was read under: revoking a scope or turning the extension off drops it, allowing a scope drops it too, and either way the next use asks for it from the start with `reason` `"load"`.
 

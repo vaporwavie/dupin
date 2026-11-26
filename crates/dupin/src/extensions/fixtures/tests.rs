@@ -566,6 +566,7 @@ fn a_render_answers_host_requests_from_the_fixture_it_renders() {
             Instant::now() + QUERY_DEADLINE,
             &call,
             crate::extensions::Role::Keyword,
+            None,
         )
         .unwrap();
     let titles: Vec<&str> = batches

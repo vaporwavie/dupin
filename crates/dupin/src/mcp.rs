@@ -551,7 +551,8 @@ fn extension_tool(
             if query.len() > dupin_ext_sdk::fixture::MAX_QUERY_BYTES {
                 return Err("query too large".into());
             }
-            let extension = crate::extensions::load_folder(&package).map_err(diagnostic)?;
+            let extension =
+                std::sync::Arc::new(crate::extensions::load_folder(&package).map_err(diagnostic)?);
             let batches = crate::extensions::answer(
                 &extension,
                 query,

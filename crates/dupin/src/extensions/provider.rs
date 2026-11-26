@@ -95,7 +95,7 @@ impl ExtensionProvider {
 /// then the catalogue's matches, in batches by section. Both answer their host requests through
 /// `call`.
 pub fn answer(
-    extension: &Extension,
+    extension: &Arc<Extension>,
     query: &str,
     page: Option<&Page>,
     limit: usize,
@@ -124,7 +124,7 @@ pub fn answer(
     }
     if exports.items {
         let left = limit.saturating_sub(batches.iter().map(|batch| batch.items.len()).sum());
-        batches.extend(extension.catalogue(query, left, deadline, call, Role::Keyword)?);
+        batches.extend(extension.catalogue(query, left, deadline, call, Role::Keyword, Some(extension))?);
         let left = limit.saturating_sub(batches.iter().map(|batch| batch.items.len()).sum());
         let searches: Vec<Item> = extension
             .web_searches(deadline, call, Role::Keyword)?
@@ -161,7 +161,7 @@ fn main_answer(
 /// The catalogue's matches for the main search. The package never sees the query, but loading
 /// its catalogue reaches host services through `call` as it does under the keyword.
 pub fn default_answer(
-    extension: &Extension,
+    extension: &Arc<Extension>,
     query: &str,
     limit: usize,
     deadline: Instant,
@@ -170,7 +170,7 @@ pub fn default_answer(
     if query.trim().is_empty() || !extension.check(deadline)?.items {
         return Ok(Vec::new());
     }
-    extension.catalogue(query, limit, deadline, call, Role::DefaultSearch)
+    extension.catalogue(query, limit, deadline, call, Role::DefaultSearch, Some(extension))
 }
 
 /// What a page of the package's shows with `query` typed on it: what its view answered,
@@ -831,7 +831,7 @@ pub(crate) fn consent_row(extension: &Extension, request: &ConsentRequest) -> It
                 ExtensionRequest::RequestAccess { scope: key.clone() },
             )],
         ),
-        _ if request.needs_binding() => (
+        _ if request.needs_pick() => (
             format!("{key} · Choose what it may use in Settings → Extensions."),
             vec![extension_action(
                 extension,

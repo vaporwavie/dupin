@@ -85,11 +85,13 @@ impl Request {
         })
     }
 
-    /// Mutations and runs of native programs need a host-verified user activation.
-    pub(crate) fn needs_activation(&self) -> bool {
+    /// Mutations and runs of native programs need a host-verified user activation, except a
+    /// profile `declared` to run in the background, which the user allowed as such.
+    pub(crate) fn needs_activation(&self, declared: &Scope) -> bool {
         match self {
             Self::Http { method, .. } => method.mutates(),
-            Self::Exec { .. } | Self::Script { .. } | Self::SnippetsWrite => true,
+            Self::Exec { .. } => !matches!(declared, Scope::Exec { background: true, .. }),
+            Self::Script { .. } | Self::SnippetsWrite => true,
             Self::Clipboard(access) => *access != ClipboardAccess::Watch,
             Self::Windows(access) => *access == WindowsAccess::Arrange,
             Self::Files { .. }
