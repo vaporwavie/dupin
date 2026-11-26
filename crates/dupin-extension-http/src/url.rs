@@ -164,11 +164,7 @@ impl Url {
     }
 
     fn allows_http(&self) -> bool {
-        #[cfg(test)]
-        if self.origin.scheme == Scheme::Http {
-            return true;
-        }
-        false
+        self.origin.scheme != Scheme::Https
     }
 }
 
