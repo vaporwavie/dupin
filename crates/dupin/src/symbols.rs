@@ -33,6 +33,11 @@ pub const INLINE: Size = Size {
     square: 16.0,
     glyph: 14.0,
 };
+/// The query field's search icon: as large as the glyph it stands in for.
+pub const FIELD: Size = Size {
+    square: 24.0,
+    glyph: 20.0,
+};
 
 struct Job {
     name: String,

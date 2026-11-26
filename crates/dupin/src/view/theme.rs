@@ -14,6 +14,7 @@ pub struct ResolvedTheme {
     pub warning: Color,
     scale: f32,
     family: tok::Family,
+    search_icon: dupin_core::config::SearchIcon,
 }
 impl std::ops::Deref for ResolvedTheme {
     type Target = tok::Theme;
@@ -48,7 +49,27 @@ impl ResolvedTheme {
                 dupin_core::config::FontFamily::Monospace => tok::Family::SystemMono,
                 dupin_core::config::FontFamily::Named(name) => tok::Family::Named(intern(name)),
             },
+            search_icon: theme.search_icon.clone(),
         }
+    }
+    /// What stands before the query field while no command's chip does.
+    pub fn search_icon(&self) -> El {
+        let name = match &self.search_icon {
+            dupin_core::config::SearchIcon::Text(glyph) => {
+                return text(glyph)
+                    .font(self.font(TextStyle::new(24.0, 400.0).lh(30.0)))
+                    .color(self.text_secondary);
+            }
+            dupin_core::config::SearchIcon::Symbol(name) => name,
+        };
+        let size = crate::symbols::Size {
+            square: crate::symbols::FIELD.square * self.scale,
+            glyph: crate::symbols::FIELD.glyph * self.scale,
+        };
+        let pixels = crate::symbols::symbol(name, size, self.text_secondary);
+        el().key("search-icon")
+            .size(size.square, size.square)
+            .pixels(&pixels)
     }
     pub fn font(&self, mut style: TextStyle) -> TextStyle {
         style.size *= self.scale;
@@ -113,11 +134,7 @@ pub fn theme_preview(theme: &dupin_core::config::Theme, dark: bool, avail_w: f32
                 .px(18.0)
                 .gap(12.0)
                 .center_y()
-                .child(
-                    text("⌕")
-                        .font(t.font(TextStyle::new(24.0, 400.0).lh(30.0)))
-                        .color(t.text_secondary),
-                )
+                .child(t.search_icon())
                 .child(
                     text("gh dupin")
                         .font(t.font(TextStyle::new(22.0, 400.0).lh(30.0)))
