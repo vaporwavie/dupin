@@ -3,6 +3,7 @@
   crane,
   native,
   rolldown,
+  rustToolchain,
   cargo-hawk,
 }:
 let
@@ -19,11 +20,11 @@ let
       # stay 0.0.0 (see Cargo.toml). buildPackage calls this too when given no cargoArtifacts.
       buildDepsOnly = args: prev.buildDepsOnly (args // { version = "0.0.0"; });
       cargo = pkgs.buildPackages.cargo-auditable-cargo-wrapper.override {
-        cargo = pkgs.rustPlatform.rust.cargo;
+        cargo = rustToolchain;
         inherit (pkgs) cargo-auditable;
       };
-      rustc = pkgs.rustPlatform.rust.rustc;
-      inherit (pkgs) clippy;
+      rustc = rustToolchain;
+      clippy = rustToolchain;
       inherit (pkgs) rustfmt;
     }
   );
@@ -73,7 +74,7 @@ let
     env = checkEnv;
     CARGO_PROFILE = "dev";
     cargoExtraArgs = "--offline --locked --workspace";
-    nativeBuildInputs = [ pkgs.clippy ];
+    nativeBuildInputs = [ rustToolchain ];
   };
   latencyArgs = baseArgs // {
     pname = "dupin-latency";

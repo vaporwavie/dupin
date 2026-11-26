@@ -29,6 +29,11 @@
 	],
 	"packageRules": [
 		{
+			"description": "A nightly toolchain bump needs a rust-overlay revision that already carries it, so a person moves the date.",
+			"matchManagers": ["rust-toolchain"],
+			"enabled": false
+		},
+		{
 			"description": "Lock file maintenance has no release timestamp, so the age gate would keep it pending forever.",
 			"matchUpdateTypes": ["lockFileMaintenance"],
 			"minimumReleaseAge": null

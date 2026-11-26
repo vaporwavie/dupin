@@ -46,6 +46,7 @@ in
           inherit (inputs) crane;
           native = dupin.baseline;
           inherit (config.packages) cargo-hawk rolldown;
+          rustToolchain = config.packages.rust-toolchain;
         };
         home-manager-module = import ./tests/home-manager-module.nix {
           inherit lib pkgs;

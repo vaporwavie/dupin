@@ -3,14 +3,21 @@
   perSystem =
     { config, pkgs, ... }:
     let
+      rustToolchain =
+        (pkgs.extend inputs.rust-overlay.overlays.default).callPackage ./rust-toolchain.nix
+          { };
       native = pkgs.callPackage ../package.nix {
         cargoVendorDir = import ./cargo-vendor.nix { craneLib = inputs.crane.mkLib pkgs; };
+        rustPlatform = pkgs.makeRustPlatform {
+          cargo = rustToolchain;
+          rustc = rustToolchain;
+        };
       };
       rolldown = pkgs.callPackage ./rolldown.nix { };
       dupin = import ./cargo-artifacts.nix {
         inherit pkgs;
         inherit (inputs) crane;
-        inherit native rolldown;
+        inherit native rolldown rustToolchain;
         inherit (config.packages) cargo-hawk;
       };
       blacksmith = pkgs.callPackage ./blacksmith.nix { };
@@ -37,6 +44,7 @@
           blacksmith
           rolldown
           ;
+        rust-toolchain = rustToolchain;
         dupin-latency = dupin.latencyBinary;
         default = dupin;
       };

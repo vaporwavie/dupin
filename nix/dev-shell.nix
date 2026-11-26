@@ -7,7 +7,6 @@
         packages =
           with pkgs;
           [
-            clippy
             rustfmt
             rust-analyzer
             nushell

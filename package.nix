@@ -143,8 +143,8 @@ let
   '';
 
   # What every Rust derivation of the workspace shares (the package here, clippy and the
-  # tests in nix/checks.nix). The toolchain is nixpkgs' own, which matches the version
-  # Rune's rust-toolchain.toml pins.
+  # tests in nix/checks.nix). The flake passes the nightly nix/rust-toolchain.nix wraps;
+  # default.nix keeps nixpkgs' stable rustPlatform, which Cargo.toml's rust-version allows.
   commonArgs = {
     pname = "dupin";
     inherit version src cargoDeps;

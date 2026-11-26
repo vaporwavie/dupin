@@ -6,6 +6,7 @@
   native,
   cargo-hawk,
   rolldown,
+  rustToolchain,
 }:
 let
   artifacts =
@@ -16,6 +17,7 @@ let
         crane
         cargo-hawk
         rolldown
+        rustToolchain
         ;
       native = native // {
         passthru = native.passthru // {

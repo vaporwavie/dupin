@@ -1,6 +1,6 @@
 # Development
 
-Dupin targets Apple silicon macOS only. It builds with Nix; the Rust toolchain is nixpkgs' own, which matches the version Rune's `rust-toolchain.toml` pins.
+Dupin targets Apple silicon macOS only. It builds with Nix on the nightly Rust that `rust-toolchain.toml` pins (see [Rust toolchain](#rust-toolchain)).
 
 ## Build and run
 
@@ -338,6 +338,22 @@ CI runs the Latency workflow as its `latency` job whenever the app could have ch
 
 Scripts in this repository are written in Nushell.
 
+## Rust toolchain
+
+`rust-toolchain.toml` pins a dated nightly, which the flake takes from rust-overlay.
+`nix/rust-toolchain.nix` wraps its rustc to pass `-Zunstable-options
+--jobs-frontend=0`, so rustc's parallel frontend uses every core, and, like
+nixpkgs' own rustc, the `NIX_RUSTFLAGS` both builders extend. Every flake build
+and the development shell use it; Hawk's stable compiler never sees those flags.
+The non-flake `default.nix` build keeps nixpkgs' stable compiler, which
+`rust-version` in `Cargo.toml` must still allow, so the code uses no nightly
+features.
+
+Renovate does not bump the nightly. Move the date in `rust-toolchain.toml` by
+hand after updating the `rust-overlay` input to a revision that carries it.
+Release builds come from that nightly, and its parallel frontend has open
+reproducibility issues (`A-reproducibility`, `A-parallel-compiler`).
+
 ## Rust visibility
 
 `just hawk` checks workspace API visibility and fails on warnings. The same
@@ -346,8 +362,9 @@ alongside its existing checks. `hawk.toml` identifies the distributed launcher
 as the production binary.
 
 Hawk 0.1.18 uses a private Rust 1.100.0 analysis toolchain. Its compiler-internal
-API requires that exact toolchain; `cargo-hawk` selects it without changing the
-compiler used by ordinary Cargo commands or the packaged launcher. Update the
+API requires that exact stable toolchain, not the workspace's nightly; `cargo-hawk`
+selects it without changing the compiler used by ordinary Cargo commands or the
+packaged launcher. Update the
 Hawk archive and its analysis compiler together in `nix/cargo-hawk.nix`.
 
 `scripts/hawk.nu` excludes the plugin protocol, runtime and policy libraries
