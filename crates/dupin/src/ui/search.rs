@@ -18,8 +18,10 @@ impl Ui {
         s.icon_cache = Some(ImageCache::new(waker));
     }
 
-    fn deliver(&mut self, origin: CommandId, delivery: Delivery, sent: Instant, tx: &mut Tx) {
-        if self.session.deliver_from(origin.clone(), delivery) {
+    /// Hand `delivery` to the session; returns whether it changed the results.
+    fn deliver(&mut self, origin: CommandId, delivery: Delivery, sent: Instant, tx: &mut Tx) -> bool {
+        let delivered = self.session.deliver_from(origin.clone(), delivery);
+        if delivered {
             crate::latency::delivered(&origin, sent, |generation| {
                 self.session.pending(&origin, generation)
             });
@@ -43,9 +45,16 @@ impl Ui {
             {
                 self.action_screen = None;
             }
+            // The list keeps its offset when its rows change, so one scrolled for the results
+            // these replace would hide the selected row. Revealing it slows the frame that
+            // draws the results, so the first row of a list at its top asks for none.
+            if self.session.selected() != 0 || self.list_offset.get() > 0.0 {
+                self.reveal_selection(tx);
+            }
             self.sync_forms(tx);
             self.fetch_icons();
         }
+        delivered
     }
 
     pub(super) fn refresh_default(&mut self, tx: &mut Tx) {
@@ -113,23 +122,7 @@ impl Ui {
                 if let Some(worker) = self.searchers.get(&id) {
                     worker.cancel();
                 }
-                let delivered = self
-                    .session
-                    .deliver_from(id.clone(), Delivery::Expired { generation });
-                changed |= delivered;
-                if delivered {
-                    crate::latency::delivered(&id, Instant::now(), |generation| {
-                        self.session.pending(&id, generation)
-                    });
-                }
-                if delivered && self.session.results() == dupin_core::session::Results::Done {
-                    crate::latency::results_done(&self.session, &|origin, item| {
-                        self.row_package(origin, item)
-                    });
-                    if !self.session.command().private_results {
-                        crate::trace::results_done(&self.query.text, self.session.items().len());
-                    }
-                }
+                changed |= self.deliver(id, Delivery::Expired { generation }, Instant::now(), tx);
             }
         }
         if let Some(next) = self
