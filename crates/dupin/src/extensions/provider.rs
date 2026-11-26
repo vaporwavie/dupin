@@ -413,7 +413,15 @@ fn searches_from(extension: &Extension, query: &str) -> bool {
         .strip_prefix(extension.keyword.as_str())
         .is_some_and(|rest| rest.is_empty() || rest.starts_with(' '));
     let allowed = own || extension.package.as_str().starts_with(super::BUNDLED_PREFIX);
-    if !allowed {
+    static NOTED: std::sync::Mutex<std::collections::BTreeSet<String>> =
+        std::sync::Mutex::new(std::collections::BTreeSet::new());
+    let first = || {
+        NOTED
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(extension.id.clone())
+    };
+    if !allowed && first() {
         crate::log::warn(&format!(
             "extension {}: left out a search action for another package's keyword; only bundled extensions hand a query to another keyword",
             extension.id
@@ -524,12 +532,15 @@ fn row_item_with(kinds: &Kinds, extension: &Extension, row: Row, catalogue: bool
         }
     };
     let (mut texts, mut urls) = (false, false);
-    let offered = offered.into_iter().filter(|action| match &action.effect {
-        RowEffect::Search { query } => searches_from(extension, query),
-        _ => true,
-    });
-    let mut actions: Vec<ItemAction> = offered
+    // An action keeps the ID of its place in the row, whatever is left out before it.
+    let offered = offered
+        .into_iter()
         .enumerate()
+        .filter(|(_, action)| match &action.effect {
+            RowEffect::Search { query } => searches_from(extension, query),
+            _ => true,
+        });
+    let mut actions: Vec<ItemAction> = offered
         .map(|(index, action)| {
             let name = |taken: &mut bool, first: &str| {
                 if std::mem::replace(taken, true) {
@@ -1167,6 +1178,28 @@ mod tests {
         };
         let mut guest = super::super::tests::extension("Proc", "proc");
         assert_eq!(searches(&guest), ["proc 42", "proc"], "only its own keyword");
+        let mut row = Row::new("a", "Row");
+        row.actions = vec![
+            RowAction::new(
+                "Elsewhere",
+                RowEffect::Search {
+                    query: "port 1".into(),
+                },
+            ),
+            RowAction::new(
+                "Here",
+                RowEffect::Search {
+                    query: "proc 1".into(),
+                },
+            ),
+        ];
+        let ids: Vec<_> = row_item_with(&kinds, &guest, row, false)
+            .item
+            .actions
+            .into_iter()
+            .map(|action| action.id)
+            .collect();
+        assert_eq!(ids, ["action-1"], "an action left out moves no other's ID");
         guest.package = PackageId::new("bundled:proc").unwrap();
         assert_eq!(
             searches(&guest),
