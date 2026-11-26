@@ -404,6 +404,14 @@ pub(crate) fn hand_over_kinds(kinds: Kinds) {
     let _ = KINDS.set(kinds);
 }
 
+/// Whether the row shows `action`: all but a `search` it may not offer.
+pub(super) fn offers(extension: &Extension, action: &dupin_js_runtime::row::RowAction) -> bool {
+    match &action.effect {
+        RowEffect::Search { query } => searches_from(extension, query),
+        _ => true,
+    }
+}
+
 /// Whether `extension` may offer a `search` action for `query`. Another package's search
 /// receives what it types, so only a package that ships with Dupin hands text to another
 /// package's keyword: any other could pass what it read to a package that may send it on. Its
@@ -536,10 +544,7 @@ fn row_item_with(kinds: &Kinds, extension: &Extension, row: Row, catalogue: bool
     let offered = offered
         .into_iter()
         .enumerate()
-        .filter(|(_, action)| match &action.effect {
-            RowEffect::Search { query } => searches_from(extension, query),
-            _ => true,
-        });
+        .filter(|(_, action)| offers(extension, action));
     let mut actions: Vec<ItemAction> = offered
         .map(|(index, action)| {
             let name = |taken: &mut bool, first: &str| {
