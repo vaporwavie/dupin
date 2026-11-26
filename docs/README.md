@@ -10,6 +10,7 @@
 ## About
 
 - [Philosophy](./philosophy.md): built for searching, fast by rule, extended with plain TypeScript
+- [FAQ](./faq.md): short answers on installing, privacy, extensions and how Dupin compares
 - [The name](./name.md): why Dupin, and the Mac launchers it descends from
 
 ## Built-in features
