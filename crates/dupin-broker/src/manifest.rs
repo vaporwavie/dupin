@@ -4,8 +4,8 @@ use serde::Serialize;
 use serde_json::{Map, Value};
 
 use crate::scope::{
-    ClipboardAccess, FilesAccess, FilesKind, Method, Origin, RowKind, Scope, ScopeKey, ScopeName,
-    WindowsAccess,
+    ClipboardAccess, FilesAccess, FilesKind, MAX_EXEC_OUTPUT_BYTES, Method, Origin, RowKind, Scope, ScopeKey,
+    ScopeName, WindowsAccess,
 };
 
 const MAX_HTTP: usize = 32;
@@ -16,6 +16,29 @@ const MAX_QUOTA_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_RETENTION_DAYS: u64 = 3650;
 const MAX_CALENDAR_DAYS: u64 = 366;
 const SCRIPT_PREFIX: &str = "@script:";
+/// Where a profile may name its program: macOS's own folders, sealed by System Integrity
+/// Protection. `/System/Volumes` holds the writable data volume, so it is left out.
+const SYSTEM_PROGRAM_FOLDERS: [&str; 6] = [
+    "/bin/",
+    "/sbin/",
+    "/usr/bin/",
+    "/usr/sbin/",
+    "/usr/libexec/",
+    "/System/",
+];
+
+fn system_program(path: &str) -> bool {
+    path.len() <= 1024
+        && crate::displayable(path)
+        && !path.starts_with("/System/Volumes/")
+        && SYSTEM_PROGRAM_FOLDERS
+            .iter()
+            .any(|folder| path.strip_prefix(folder).is_some_and(|rest| !rest.is_empty()))
+        && path
+            .split('/')
+            .skip(1)
+            .all(|component| !component.is_empty() && component != "." && component != "..")
+}
 
 /// One problem in a capability declaration, in the shape the extension runtime reports.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -440,18 +463,78 @@ impl Parser {
                 continue;
             }
             let name = self.name(&key, &field);
-            let Some(object) = self.fields(entry, &field, &["args", "output"], &["args"]) else {
+            let Some(object) = self.fields(
+                entry,
+                &field,
+                &["args", "output", "program", "catalogue", "outputBytes"],
+                &["args"],
+            ) else {
                 continue;
             };
             let output = self.boolean(object.get("output"), &format!("{field}.output"));
+            let catalogue = self.boolean(object.get("catalogue"), &format!("{field}.catalogue"));
             let args = object
                 .get("args")
                 .and_then(|args| self.args(args, &format!("{field}.args")));
-            if let (Some(name), Some(args)) = (name, args) {
-                scopes.push(Scope::Exec { name, args, output });
+            let program = match object.get("program") {
+                None => Some(None),
+                Some(program) => self.program(program, &format!("{field}.program")).map(Some),
+            };
+            let output_bytes = match object.get("outputBytes") {
+                None => Some(None),
+                Some(_) if !output => {
+                    self.report(
+                        "invalid-value",
+                        format!("{field}.outputBytes"),
+                        "only bounds output the profile reads",
+                        Some("Set `output: true` too, or remove `outputBytes`."),
+                    );
+                    None
+                }
+                Some(bytes) => self
+                    .integer(
+                        bytes,
+                        &format!("{field}.outputBytes"),
+                        1..=u64::from(MAX_EXEC_OUTPUT_BYTES),
+                    )
+                    .map(|bytes| Some(bytes as u32)),
+            };
+            if let (Some(name), Some(args), Some(program), Some(output_bytes)) =
+                (name, args, program, output_bytes)
+            {
+                scopes.push(Scope::Exec {
+                    name,
+                    args,
+                    output,
+                    program,
+                    catalogue,
+                    output_bytes,
+                });
             }
         }
         scopes
+    }
+
+    /// A program in one of the folders System Integrity Protection keeps, so the program the
+    /// user approved can't be swapped for another behind the profile's name.
+    fn program(&mut self, value: &Value, field: &str) -> Option<String> {
+        let Value::String(path) = value else {
+            self.wrong_type(field, "a string", value);
+            return None;
+        };
+        if !system_program(path) {
+            self.report(
+                "invalid-value",
+                field,
+                format!(
+                    "must be a program of macOS's own, in {}",
+                    SYSTEM_PROGRAM_FOLDERS.join(", ")
+                ),
+                Some("Leave `program` out to have the user pick the program when they allow the profile."),
+            );
+            return None;
+        }
+        Some(path.clone())
     }
 
     fn args(&mut self, value: &Value, field: &str) -> Option<Vec<String>> {

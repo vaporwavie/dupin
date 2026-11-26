@@ -15,6 +15,11 @@ pub enum Trigger {
     Background,
     /// A search or view request while the user types.
     Query,
+    /// Dupin asking for a package's catalogue: on first use, once it expires or after an
+    /// invalidation, never for a keystroke. Only a scope that
+    /// [runs for a catalogue](Scope::runs_for_catalogue) may do here what otherwise needs an
+    /// activation.
+    Catalogue,
     /// A deliberate user action: Enter, a pressed action, a submitted form.
     Activation,
 }
@@ -644,7 +649,12 @@ impl Broker {
         if let Some(reason) = request.exceeds(declared) {
             return Decision::Deny(Denial::OutOfScope { key, reason });
         }
-        if request.needs_activation() && trigger != Trigger::Activation {
+        let activated = match trigger {
+            Trigger::Activation => true,
+            Trigger::Catalogue => declared.runs_for_catalogue(),
+            Trigger::Query | Trigger::Background => false,
+        };
+        if request.needs_activation() && !activated {
             return Decision::Deny(Denial::NeedsActivation);
         }
         let needs = |reason| {
@@ -898,7 +908,12 @@ impl Broker {
             }
             changed = true;
         }
-        if let Some(binding) = self.base_grant(id, &installed.revision, key) {
+        // A profile that names its program takes no binding, and one that doesn't takes one, so
+        // a base grant that disagrees with the declaration grants nothing.
+        if let Some(binding) = self
+            .base_grant(id, &installed.revision, key)
+            .filter(|binding| binding.is_some() == declared.needs_binding())
+        {
             return Effective::Granted {
                 source: GrantSource::Base,
                 binding,

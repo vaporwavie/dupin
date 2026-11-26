@@ -118,6 +118,19 @@ pub struct Session {
 }
 
 impl Session {
+    /// The same package, revision and generation, asked for another reason.
+    fn with_trigger(&self, trigger: Trigger) -> Self {
+        Self {
+            bridge: self.bridge.clone(),
+            package: self.package.clone(),
+            revision: self.revision.clone(),
+            generation: self.generation,
+            trigger,
+            namespace: self.namespace.clone(),
+            links: Mutex::default(),
+        }
+    }
+
     fn issue_links(&self, events: &serde_json::Value) {
         let links = events
             .as_array()
@@ -160,14 +173,20 @@ impl HostServices for Session {
 /// is shown only while [`Bridge::is_current`] says that generation still holds.
 pub struct Call {
     pub services: Arc<dyn HostServices>,
+    /// What loading the package's catalogue reaches the host through while the call runs: for
+    /// a search, the same services asked as Dupin asking for the catalogue
+    /// ([`Trigger::Catalogue`]) rather than as typing.
+    pub catalogue: Arc<dyn HostServices>,
     pub generation: Option<Generation>,
 }
 
 impl Call {
     /// A call that reaches no host service, as `dupin ext run` and tests make.
     pub fn none() -> Self {
+        let services: Arc<dyn HostServices> = Arc::new(dupin_extension_host::NoServices);
         Self {
-            services: Arc::new(dupin_extension_host::NoServices),
+            catalogue: services.clone(),
+            services,
             generation: None,
         }
     }
@@ -396,10 +415,17 @@ impl Bridge {
     /// trigger from what it saw: typing, a chosen action or a watched event.
     pub fn call(&self, id: &PackageId, trigger: Trigger) -> Call {
         match self.session(id, trigger) {
-            Some(session) => Call {
-                generation: Some(session.generation),
-                services: Arc::new(session),
-            },
+            Some(session) => {
+                let generation = Some(session.generation);
+                let catalogue: Option<Arc<dyn HostServices>> = (trigger == Trigger::Query)
+                    .then(|| Arc::new(session.with_trigger(Trigger::Catalogue)) as _);
+                let services: Arc<dyn HostServices> = Arc::new(session);
+                Call {
+                    catalogue: catalogue.unwrap_or_else(|| services.clone()),
+                    services,
+                    generation,
+                }
+            }
             None => Call::none(),
         }
     }

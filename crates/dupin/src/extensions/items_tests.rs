@@ -482,6 +482,39 @@ fn every_part_of_a_catalogue_shares_one_deadline() {
     assert_eq!(extension.catalogue.len(), 0);
 }
 
+#[test]
+fn an_expired_catalogue_is_matched_as_held_until_a_refresh_of_its_own_replaces_it() {
+    dupin_extension_host::skip_inside_a_sandbox!();
+    let (_folder, extension) = package(
+        "",
+        &[(
+            "main.js",
+            "export function items(ctx) { return { ttl: 60, items: [{ id: 'a', title: `asked on ${ctx.reason}` }] }; }",
+        )],
+    );
+    let listed = |extension: &Extension| {
+        let found = extension
+            .catalogue(
+                "",
+                10,
+                Instant::now() + QUERY_DEADLINE,
+                &Call::none(),
+                Role::Keyword,
+            )
+            .unwrap();
+        titles(&found).into_iter().map(str::to_owned).collect::<Vec<_>>()
+    };
+    assert_eq!(listed(&extension), ["asked on load"]);
+    assert!(
+        !extension.refresh_catalogue(&Call::none()).unwrap(),
+        "not expired yet"
+    );
+    extension.catalogue.expire();
+    assert_eq!(listed(&extension), ["asked on load"], "typing never waits for it");
+    assert!(extension.refresh_catalogue(&Call::none()).unwrap());
+    assert_eq!(listed(&extension), ["asked on expired"]);
+}
+
 /// A native provider over a catalogue, as a built-in port's baseline would be.
 struct NativeCatalogue(Catalogue);
 
@@ -794,7 +827,13 @@ fn every_part_is_asked_for_with_the_settings_it_is_handed() {
     let (first, second) = (settings(1), settings(2));
     let services = no_services();
     let never = || false;
-    let mut fetch = extension.fetch(super::host(), Instant::now() + QUERY_DEADLINE, &never, &services);
+    let mut fetch = extension.fetch(
+        super::host(),
+        super::Fetching::Resident,
+        Instant::now() + QUERY_DEADLINE,
+        &never,
+        &services,
+    );
     let mut cursor = |settings| {
         fetch(None, dupin_js_runtime::Reason::Load, settings)
             .unwrap()

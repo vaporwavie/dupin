@@ -293,7 +293,11 @@ declare module 'dupin' {
 	export type Preferences = Readonly<Record<string, Json>>;
 
 	interface CatalogueAnswer {
-		/** Seconds, from 1 to 86,400, until Dupin asks again. Without it, it asks again only when invalidated. */
+		/**
+		 * Seconds, from 1 to 86,400, until Dupin asks again. Without it, it asks again only when
+		 * invalidated. Once they pass, typing goes on matching what Dupin holds while it asks
+		 * again in the background, and every `ttl` while the panel lists the catalogue.
+		 */
 		ttl?: number;
 		/** Up to 256 bytes, handed back as `ctx.cursor` next time. */
 		cursor?: string;
@@ -329,8 +333,8 @@ declare module 'dupin' {
 	 * user types, asking again only on first use, after `ttl`, when an action or event handler
 	 * invalidates it or when its preferences change. At most 10,000 items and 8 MiB of text. It
 	 * may use host services as `search` does: what reads, and `storage` writes too, but nothing
-	 * that needs an action the user chose. With `defaultSearch`, it may run as the user types in
-	 * the main search.
+	 * that needs an action the user chose, except an `exec` profile that declares `catalogue`.
+	 * With `defaultSearch`, it may run as the user types in the main search.
 	 */
 	export type Items = (ctx: ItemsContext) => ItemsResult | Promise<ItemsResult>;
 
@@ -560,10 +564,23 @@ declare module 'dupin' {
 		files?: Record<string, { kind: 'file' | 'directory'; access: ('read' | 'list')[] }>;
 		/**
 		 * Up to 16 named profiles: an argument template whose `{input}` placeholders take one line
-		 * of text each, run with a program the user picks; or `@script:<name>` for one of the
-		 * user's script commands. `output` asks to receive stdout and stderr.
+		 * of text each, run with a program the user picks, or with `program`, one of macOS's own
+		 * in `/bin`, `/sbin`, `/usr/bin`, `/usr/sbin`, `/usr/libexec` or `/System`; or
+		 * `@script:<name>` for one of the user's script commands. `output` asks to receive stdout
+		 * and stderr, each up to `outputBytes` (64 KiB unless declared, 1 MiB at most).
+		 * `catalogue` lets the profile run when Dupin asks for the package's catalogue, without
+		 * an action of the user's; anywhere else it still needs one.
 		 */
-		exec?: Record<string, { args?: string[]; output?: boolean }>;
+		exec?: Record<
+			string,
+			{
+				args?: string[];
+				output?: boolean;
+				program?: string;
+				outputBytes?: number;
+				catalogue?: boolean;
+			}
+		>;
 		/**
 		 * Encrypted records private to the package: 1 byte to 64 MiB, kept 1–3,650 days or until
 		 * deleted. `sync` asks for `storage:sync`: once the user grants it on a Mac, a package installed
@@ -677,7 +694,10 @@ declare module 'dupin' {
 		readonly truncated?: boolean;
 	}
 
-	/** `exec` capability, only in an action. `profile` is a key of `exec`, such as `@script:open-in-zed`. */
+	/**
+	 * `exec` capability, only in an action, or in `items` for a profile that declares
+	 * `catalogue`. `profile` is a key of `exec`, such as `@script:open-in-zed`.
+	 */
 	export const exec: {
 		run(profile: string, inputs?: Record<string, string | number>): Promise<ExecResult>;
 	};

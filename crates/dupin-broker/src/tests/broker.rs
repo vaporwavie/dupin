@@ -179,7 +179,7 @@ fn mutations_and_programs_need_a_user_activation() {
         Request::Clipboard(ClipboardAccess::Write),
         Request::Clipboard(ClipboardAccess::Read),
     ] {
-        for trigger in [Trigger::Query, Trigger::Background] {
+        for trigger in [Trigger::Query, Trigger::Background, Trigger::Catalogue] {
             assert_eq!(
                 denial(check(&broker, &package, &request, trigger)),
                 Denial::NeedsActivation,
@@ -665,6 +665,101 @@ fn uninstalling_forgets_every_decision() {
     assert!(!broker.is_enabled(&package));
     assert_eq!(broker.consents(&package)[0].1, ConsentState::Undecided);
     assert!(!broker.uninstall(&id("missing")));
+}
+
+fn listing() -> Capabilities {
+    caps(json!({ "exec": {
+        "ps": { "program": "/bin/ps", "args": ["-ax"], "output": true, "catalogue": true },
+        "kill": { "program": "/bin/kill", "args": ["-TERM", "{pid}"] }
+    } }))
+}
+
+#[test]
+fn only_a_catalogue_profile_runs_without_an_activation_and_only_for_the_catalogue() {
+    let (mut broker, package) = enabled(listing());
+    for scope in ["exec:ps", "exec:kill"] {
+        assert_eq!(
+            broker.approve(&package, &key(scope), Some(PathBuf::from("/bin/sh"))),
+            Err(BrokerError::UnexpectedBinding(key(scope))),
+            "a profile that names its program takes no other"
+        );
+        broker.approve(&package, &key(scope), None).unwrap();
+    }
+    let ps = Request::Exec { profile: name("ps") };
+    let kill = Request::Exec {
+        profile: name("kill"),
+    };
+    let allowed = permit(check(&broker, &package, &ps, Trigger::Catalogue));
+    assert_eq!(allowed.binding(), None);
+    for trigger in [Trigger::Query, Trigger::Background] {
+        assert_eq!(
+            denial(check(&broker, &package, &ps, trigger)),
+            Denial::NeedsActivation,
+            "a search, a view or an event never runs it: {trigger:?}"
+        );
+    }
+    assert!(matches!(
+        check(&broker, &package, &ps, Trigger::Activation),
+        Decision::Allow(_)
+    ));
+    assert_eq!(
+        denial(check(&broker, &package, &kill, Trigger::Catalogue)),
+        Denial::NeedsActivation
+    );
+    assert!(matches!(
+        check(&broker, &package, &kill, Trigger::Activation),
+        Decision::Allow(_)
+    ));
+}
+
+#[test]
+fn a_bundled_package_holds_the_programs_it_names_but_a_picked_one_waits_for_the_pick() {
+    let mut broker = Broker::new(Base::default(), Local::default());
+    let package = id("bundled:proc");
+    broker.set_bundled(package.clone(), rev(R1), true);
+    let declared = caps(json!({ "exec": {
+        "ps": { "program": "/bin/ps", "args": ["-ax"], "output": true, "catalogue": true },
+        "git-status": { "args": ["status"] }
+    } }));
+    let _ = broker.install(package.clone(), rev(R1), declared);
+    let states: Vec<_> = broker
+        .consents(&package)
+        .into_iter()
+        .map(|(scope, state)| (scope.key().to_string(), state))
+        .collect();
+    assert_eq!(
+        states,
+        [
+            ("exec:git-status".into(), ConsentState::Undecided),
+            ("exec:ps".into(), ConsentState::Granted(GrantSource::Bundled)),
+        ]
+    );
+}
+
+#[test]
+fn a_base_grant_of_a_profile_must_bind_exactly_when_the_declaration_picks() {
+    let base = |binding: &str| {
+        Base::parse(&format!(
+            "version = 1\n[packages.bookmarks]\nrevision = \"{R1}\"\nenabled = true\ngrant = [\"exec:ps\", \"exec:kill\"]\n{binding}"
+        ))
+        .unwrap()
+    };
+    let ps = Request::Exec { profile: name("ps") };
+    for (file, granted) in [
+        (base(""), true),
+        (base("bindings = { \"exec:ps\" = \"/bin/sh\" }"), false),
+    ] {
+        let mut broker = Broker::new(file, Local::default());
+        let package = id("bookmarks");
+        let _ = broker.install(package.clone(), rev(R1), listing());
+        assert_eq!(
+            matches!(
+                check(&broker, &package, &ps, Trigger::Catalogue),
+                Decision::Allow(_)
+            ),
+            granted
+        );
+    }
 }
 
 #[test]

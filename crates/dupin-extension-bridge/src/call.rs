@@ -1053,10 +1053,21 @@ fn profile(permit: &Permit, script: bool) -> Result<exec::Profile, Failure> {
             },
         )
         .map_err(unavailable),
-        Scope::Exec { name, args, output } if !script => {
-            let binding = permit
-                .binding()
-                .ok_or_else(|| Failure::new("failed", "no program was picked for the profile"))?;
+        Scope::Exec {
+            name,
+            args,
+            output,
+            program,
+            output_bytes,
+            ..
+        } if !script => {
+            let target = match program {
+                Some(program) => std::path::PathBuf::from(program),
+                None => permit
+                    .binding()
+                    .ok_or_else(|| Failure::new("failed", "no program was picked for the profile"))?
+                    .to_path_buf(),
+            };
             let inputs = args
                 .iter()
                 .filter_map(|arg| placeholder(arg))
@@ -1077,11 +1088,12 @@ fn profile(permit: &Permit, script: bool) -> Result<exec::Profile, Failure> {
             let template: Vec<&str> = args.iter().map(String::as_str).collect();
             exec::Profile::new(
                 name.as_str(),
-                exec::Target::Executable(binding.to_path_buf()),
+                exec::Target::Executable(target),
                 &template,
                 inputs,
                 exec::Options {
                     return_output: *output,
+                    output_bytes: output_bytes.map_or(exec::DEFAULT_OUTPUT_BYTES, |bytes| bytes as usize),
                     ..exec::Options::default()
                 },
             )

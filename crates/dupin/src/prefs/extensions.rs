@@ -443,7 +443,9 @@ impl Prefs {
                     None => return,
                 }
             }
-            Scope::Exec { name, .. } => match pick(
+            Scope::Exec {
+                name, program: None, ..
+            } => match pick(
                 dupin_mac::pick::Kind::Program,
                 &format!("Choose the program “{name}” runs"),
             ) {

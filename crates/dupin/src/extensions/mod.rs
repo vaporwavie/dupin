@@ -41,7 +41,7 @@ use catalogue::Asking;
 
 pub use fixtures::{Rendered, render, test};
 pub use provider::{ACTION_DEADLINE, ExtensionProvider, QUERY_DEADLINE, Role, answer};
-pub(crate) use provider::{hand_over_kinds, is_answered_consent_row, stands_in};
+pub(crate) use provider::{hand_over_kinds, is_answered_consent_row, on_catalogue_refreshed, stands_in};
 
 pub(crate) use crate::catalog_watch::Watch;
 
@@ -68,6 +68,9 @@ pub struct Extension {
     /// What the package exports, once a call has linked it.
     exports: OnceLock<Exports>,
     catalogue: catalogue::Cached,
+    /// When a search last matched the catalogue, which keeps [`Extension::keep_fresh`] going.
+    listed: std::sync::Mutex<Option<Instant>>,
+    keeping_fresh: AtomicBool,
     web_searches_noted: AtomicBool,
     /// What the broker knows the package by: its `name`, or `bundled:<name>` for one that
     /// ships with Dupin.
@@ -80,6 +83,14 @@ pub struct Extension {
     pub provides: manifest::Provides,
     /// The bytecode the extension host compiled, which only the host ever loads.
     compiled: Compiled,
+}
+
+/// Which helper asks a package for its catalogue: the resident one a search waits for, or one
+/// of its own for a refresh nobody waits for.
+#[derive(Clone, Copy)]
+enum Fetching {
+    Resident,
+    Alone,
 }
 
 /// Where an extension was found. A user extension with a bundled one's `name` replaces it.
@@ -215,11 +226,13 @@ impl Extension {
 
     /// The catalogue's rows for `query`, asking the package for its catalogue first when Dupin
     /// holds none, it went stale, its preferences changed or it was made under another
-    /// generation than `call`'s. Its host requests go through `call`, as a search's do. Typing
-    /// never cancels that, since the next keystroke needs the same catalogue. Every part of it
-    /// must arrive before `deadline`, the search's own, so a slow catalogue fails with its own
-    /// diagnostic before the search expires. For the main search, `role` holds off asking again
-    /// after a failure.
+    /// generation than `call`'s. Its host requests go through `call`'s catalogue services,
+    /// asked as Dupin asking for the catalogue rather than as typing. Typing never cancels
+    /// that, since the next keystroke needs the same catalogue. Every part of it must arrive
+    /// before `deadline`, the search's own, so a slow catalogue fails with its own diagnostic
+    /// before the search expires. For the main search, `role` holds off asking again after a
+    /// failure. Rows that only expired are matched as they are; [`Extension::keep_fresh`]
+    /// asks for them again.
     pub fn catalogue(
         &self,
         query: &str,
@@ -235,12 +248,87 @@ impl Extension {
             role,
         };
         let never = || false;
-        self.catalogue
+        let rows = self
+            .catalogue
             .search(
                 query,
                 limit,
                 asking,
-                &mut self.fetch(host(), deadline, &never, &call.services),
+                &mut self.fetch(host(), Fetching::Resident, deadline, &never, &call.catalogue),
+                self,
+            )
+            .map_err(|error| self.located(error))?;
+        *self
+            .listed
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Instant::now());
+        Ok(rows)
+    }
+
+    /// Keeps the catalogue fresh while it is listed: each time its `ttl` passes, asks for it
+    /// again in a helper of its own and calls `refreshed`, which searches again if the panel
+    /// still lists it. It stops once a refresh passes with no search of the catalogue since the
+    /// one before, as when the panel hid or moved on, and the next search that lists it starts
+    /// it again. A catalogue without a `ttl` needs none of this.
+    pub fn keep_fresh(
+        self: &Arc<Self>,
+        call: impl Fn() -> Call + Send + 'static,
+        refreshed: impl Fn() + Send + 'static,
+    ) {
+        if self.catalogue.expires().is_none() || self.keeping_fresh.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let extension = self.clone();
+        std::thread::spawn(move || {
+            let listed = || {
+                *extension
+                    .listed
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+            };
+            let mut since = listed().unwrap_or_else(Instant::now);
+            while let Some(expires) = extension.catalogue.expires() {
+                std::thread::sleep(expires.saturating_duration_since(Instant::now()));
+                if listed().is_none_or(|listed| listed < since) {
+                    break;
+                }
+                since = Instant::now();
+                match extension.refresh_catalogue(&call()) {
+                    Ok(true) => refreshed(),
+                    Ok(false) => {}
+                    Err(error) => {
+                        if let RunError::Failed(diagnostic) = &error {
+                            crate::log::warn(&format!(
+                                "extension {}: {}",
+                                extension.id,
+                                diagnostic.for_log()
+                            ));
+                        }
+                        // The failure shows when the panel asks for the catalogue again.
+                        refreshed();
+                        break;
+                    }
+                }
+            }
+            extension.keeping_fresh.store(false, Ordering::Release);
+        });
+    }
+
+    /// Asks for rows that expired again, in a helper of its own, as [`Extension::keep_fresh`]
+    /// does, and reports whether they changed. Searches meanwhile match the expired rows.
+    pub fn refresh_catalogue(&self, call: &Call) -> Result<bool, RunError> {
+        let settings = self.settings();
+        let asking = Asking {
+            preferences: &settings,
+            generation: call.generation,
+            role: Role::Keyword,
+        };
+        let never = || false;
+        let deadline = Instant::now() + QUERY_DEADLINE;
+        self.catalogue
+            .refresh(
+                asking,
+                &mut self.fetch(host(), Fetching::Alone, deadline, &never, &call.catalogue),
                 self,
             )
             .map_err(|error| self.located(error))
@@ -252,6 +340,7 @@ impl Extension {
     fn fetch<'a>(
         &'a self,
         host: &'a Host,
+        fetching: Fetching,
         deadline: Instant,
         cancelled: &'a dyn Fn() -> bool,
         services: &'a Arc<dyn Services>,
@@ -266,7 +355,12 @@ impl Extension {
                     dupin_extension_host::Preferences::encode(&preferences),
                 )
             }));
-            host.items(
+            let items = match fetching {
+                Fetching::Resident => Host::items,
+                Fetching::Alone => Host::items_alone,
+            };
+            items(
+                host,
                 &self.compiled,
                 cursor,
                 reason,
@@ -296,7 +390,7 @@ impl Extension {
         self.catalogue
             .web_searches(
                 asking,
-                &mut self.fetch(host(), deadline, &never, &call.services),
+                &mut self.fetch(host(), Fetching::Resident, deadline, &never, &call.catalogue),
                 self,
             )
             .map_err(|error| self.located(error))
@@ -742,6 +836,8 @@ fn load_with(
             preferences: manifest.preferences,
             exports: OnceLock::new(),
             catalogue: catalogue::Cached::new(manifest.matching),
+            listed: std::sync::Mutex::new(None),
+            keeping_fresh: AtomicBool::new(false),
             web_searches_noted: AtomicBool::new(false),
             package,
             revision,
@@ -1014,6 +1110,8 @@ pub(crate) mod tests {
             preferences: Default::default(),
             exports: OnceLock::new(),
             catalogue: catalogue::Cached::default(),
+            listed: std::sync::Mutex::new(None),
+            keeping_fresh: AtomicBool::new(false),
             web_searches_noted: AtomicBool::new(false),
             revision: Revision::new("blake3:fixture").unwrap(),
             capabilities: Capabilities::default(),

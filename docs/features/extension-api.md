@@ -114,6 +114,8 @@ export function items() {
 
 `items` returns an array of items, or a list with `items` or `sections` as for `search`. It runs on first use, and again only after its `ttl` or when one of its actions or event handlers invalidates it.
 
+Once the `ttl` passes, typing goes on matching the items Dupin holds while it asks again in the background, in a host of its own, and swaps the new items in at once when they arrive. While the panel lists the catalogue, Dupin asks again each time the `ttl` passes, without a keystroke, and searches the current query again with what came back; once the panel hides or moves on, it stops until the catalogue is next listed. So a catalogue with a short `ttl`, such as a list of running processes every 2 seconds, keeps itself current while you look at it and costs nothing once you don't.
+
 Typing the keyword and Space (such as `bm`) lists the catalogue in its own order, under its sections. Typing more ranks every item by how well its title or keywords match, as apps are ranked, and puts the items you pick most often for that query first; the headings then give way to one ranked list.
 
 Every catalogue item needs an `id` that stays with it as the list changes: Dupin applies updates by it and remembers which items you pick by it, so a position would hand one item's history to whatever takes its place.
@@ -123,11 +125,11 @@ Every catalogue item needs an `id` that stays with it as the list changes: Dupin
 <details>
 <summary>List fields and ctx</summary>
 
-| List field | Value                                                                                                                                      |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `ttl`      | Seconds, 1 to 86,400. Dupin asks again on the first use after they pass. Without it, the catalogue stays until it is invalidated.          |
-| `cursor`   | Up to 256 bytes of the package's choosing, handed back as `ctx.cursor` the next time Dupin asks.                                           |
-| `more`     | `true` when this is only the first part: Dupin asks again at once with `ctx.reason` `"more"` and the cursor, and keeps the parts together. |
+| List field | Value                                                                                                                                       |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ttl`      | Seconds, 1 to 86,400. Dupin asks again in the background once they pass, as above. Without it, the catalogue stays until it is invalidated. |
+| `cursor`   | Up to 256 bytes of the package's choosing, handed back as `ctx.cursor` the next time Dupin asks.                                            |
+| `more`     | `true` when this is only the first part: Dupin asks again at once with `ctx.reason` `"more"` and the cursor, and keeps the parts together.  |
 
 `ctx` is frozen:
 
@@ -169,7 +171,7 @@ A change of preferences drops the catalogue, so the next use lists it with them.
 <details>
 <summary>What items may use</summary>
 
-`items` reaches host services as `search` does. It runs while you type, never because you chose an action, so it may use what you allowed that needs no action of yours (files, GET and HEAD, the dictionary, calendars and `storage`, whose writes and deletes need none either), and anything that needs an action you chose, such as reading the clipboard, fails with `needs-activation`. A request that needs consent shows its question under the keyword.
+`items` reaches host services as `search` does. It runs while you type, never because you chose an action, so it may use what you allowed that needs no action of yours (files, GET and HEAD, the dictionary, calendars and `storage`, whose writes and deletes need none either), and anything that needs an action you chose, such as reading the clipboard, fails with `needs-activation`. The exception is an [exec profile](./extension-permissions.md#exec) declared `catalogue`, which `items` alone may run: a `search`, a view or an event handler that runs it fails with `needs-activation`. A request that needs consent shows its question under the keyword.
 
 A catalogue belongs to the access it was read under: revoking a scope or turning the extension off drops it, allowing a scope drops it too, and either way the next use asks for it from the start with `reason` `"load"`.
 

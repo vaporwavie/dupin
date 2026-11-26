@@ -404,6 +404,16 @@ pub(crate) fn hand_over_kinds(kinds: Kinds) {
     let _ = KINDS.set(kinds);
 }
 
+type Refreshed = Box<dyn Fn(&PackageId) + Send + Sync>;
+static REFRESHED: OnceLock<Refreshed> = OnceLock::new();
+
+/// What the launcher does once a package's catalogue was asked for again in the background:
+/// search again if the panel still lists it. Outside the launcher nothing keeps a catalogue
+/// fresh.
+pub(crate) fn on_catalogue_refreshed(refreshed: impl Fn(&PackageId) + Send + Sync + 'static) {
+    let _ = REFRESHED.set(Box::new(refreshed));
+}
+
 fn kinds() -> &'static Kinds {
     KINDS.get().unwrap_or(&UNCONFIGURED)
 }
@@ -639,6 +649,30 @@ fn host_image(extension: &Extension, image: RowImage) -> HostImage {
 }
 
 impl ExtensionProvider {
+    /// Has the catalogue the search just listed asked for again each time its `ttl` passes,
+    /// while the panel goes on listing it. Only the launcher, which hands Dupin a bridge and
+    /// searches again when told, keeps one fresh.
+    fn keep_fresh(&self, role: Role, page: bool) {
+        let (Some(bridge), Some(refreshed)) = (&self.bridge, REFRESHED.get()) else {
+            return;
+        };
+        if page
+            || role == Role::MainSearch
+            || !self
+                .extension
+                .check(Instant::now())
+                .is_ok_and(|exports| exports.items)
+        {
+            return;
+        }
+        let (bridge, id) = (bridge.clone(), self.extension.package.clone());
+        let call = {
+            let id = id.clone();
+            move || bridge.call(&id, Trigger::Catalogue)
+        };
+        self.extension.keep_fresh(call, move || refreshed(&id));
+    }
+
     /// Among the main search's rows from every source, each of the package's rows without an
     /// icon shows the package's. Under its keyword its chip shows it once, so its rows keep
     /// only their own.
@@ -755,10 +789,13 @@ impl Provider for ExtensionProvider {
             }
         }
         match answer {
-            Ok(batches) => batches
-                .into_iter()
-                .map(|batch| self.with_package_icon(role, batch))
-                .for_each(emit),
+            Ok(batches) => {
+                batches
+                    .into_iter()
+                    .map(|batch| self.with_package_icon(role, batch))
+                    .for_each(emit);
+                self.keep_fresh(role, request.page.is_some());
+            }
             Err(RunError::Cancelled) => {}
             Err(RunError::Failed(diagnostic)) => {
                 crate::log::warn(&format!(

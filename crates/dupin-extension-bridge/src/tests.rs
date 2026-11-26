@@ -415,6 +415,76 @@ fn mutations_and_programs_need_an_action_the_user_chose() {
 }
 
 #[test]
+fn a_catalogue_profile_runs_the_program_it_names_for_the_catalogue_alone() {
+    dupin_extension_host::skip_inside_a_sandbox!();
+    let world = world(
+        serde_json::json!({ "exec": {
+            "ps": { "program": "/bin/ps", "args": ["-ax"], "output": true, "outputBytes": 1_048_576, "catalogue": true },
+            "kill": { "program": "/bin/kill", "args": ["-TERM", "{pid}"] }
+        } }),
+        &guest(
+            "const list = () => report(() => exec.run('ps', {}).then((r) => r.stdout.trim()));
+             const kill = () => report(() => exec.run('kill', { pid: '42' }).then((r) => r.code));
+             export async function search() { return [{ title: `${await list()} | ${await kill()}` }]; }
+             export async function items() { return [{ id: 'a', title: `${await list()} | ${await kill()}` }]; }
+             export const actions = { async go() { return { type: 'toast', text: `${await list()} | ${await kill()}` }; } };",
+        ),
+    );
+    world.enable();
+    world.grant("exec:ps");
+    world.grant("exec:kill");
+    assert_eq!(
+        world.first(""),
+        "needs-activation | needs-activation",
+        "a search never runs a program"
+    );
+    let call = world.bridge.call(&world.id, Trigger::Query);
+    let page = world
+        .host
+        .items(
+            &world.package,
+            None,
+            dupin_js_runtime::Reason::Load,
+            &dupin_extension_host::Preferences::encode(&serde_json::json!({})),
+            Instant::now() + Duration::from_secs(5),
+            &|| false,
+            &call.catalogue,
+        )
+        .unwrap();
+    let dupin_js_runtime::row::PageChange::Reset { rows } = page.change else {
+        panic!("a whole catalogue");
+    };
+    assert_eq!(
+        rows[0].title, "ok \"clean\" | needs-activation",
+        "the catalogue lists, but only a chosen action signals"
+    );
+    let background = world.bridge.call(&world.id, Trigger::Background);
+    assert!(
+        std::sync::Arc::ptr_eq(&background.services, &background.catalogue),
+        "only a search's call asks for its catalogue as Dupin rather than as typing"
+    );
+    assert_eq!(world.toast("go"), "ok \"clean\" | ok 0");
+    let programs = world.exec.programs.lock().unwrap();
+    assert_eq!(
+        *programs,
+        [
+            (
+                dupin_host_services::exec::Target::Executable("/bin/ps".into()),
+                1_048_576
+            ),
+            (
+                dupin_host_services::exec::Target::Executable("/bin/ps".into()),
+                1_048_576
+            ),
+            (
+                dupin_host_services::exec::Target::Executable("/bin/kill".into()),
+                dupin_host_services::exec::DEFAULT_OUTPUT_BYTES
+            ),
+        ]
+    );
+}
+
+#[test]
 fn a_write_past_the_quota_is_refused_and_deletes_nothing() {
     dupin_extension_host::skip_inside_a_sandbox!();
     let world = world(

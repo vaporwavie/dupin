@@ -373,6 +373,16 @@ impl OsPermission {
     }
 }
 
+/// The most output an executable profile hands back per stream unless it declares more: the
+/// exec service's own default.
+pub const EXEC_OUTPUT_BYTES: u32 = 64 * 1024;
+/// The most output a profile may declare, the exec service's own limit.
+pub const MAX_EXEC_OUTPUT_BYTES: u32 = 1024 * 1024;
+
+fn output_limit(declared: Option<u32>) -> u32 {
+    declared.unwrap_or(EXEC_OUTPUT_BYTES)
+}
+
 /// One grantable unit of a declaration. A [`ScopeKey`] names it; the rest bounds it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case", deny_unknown_fields)]
@@ -390,6 +400,16 @@ pub enum Scope {
         name: ScopeName,
         args: Vec<String>,
         output: bool,
+        /// One of macOS's own programs, which the profile runs without the user picking one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        program: Option<String>,
+        /// It may run when Dupin asks for the package's catalogue, without an action of the
+        /// user's.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        catalogue: bool,
+        /// The most output it hands back per stream, when that is more than the default.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        output_bytes: Option<u32>,
     },
     Script {
         name: ScopeName,
@@ -467,13 +487,30 @@ impl Scope {
                 },
             ) => name == n && kind == k && access.is_superset(a),
             (
-                Self::Exec { name, args, output },
+                Self::Exec {
+                    name,
+                    args,
+                    output,
+                    program,
+                    catalogue,
+                    output_bytes,
+                },
                 Self::Exec {
                     name: n,
                     args: a,
                     output: o,
+                    program: p,
+                    catalogue: c,
+                    output_bytes: b,
                 },
-            ) => name == n && args == a && (*output || !o),
+            ) => {
+                name == n
+                    && args == a
+                    && program == p
+                    && (*output || !o)
+                    && (*catalogue || !c)
+                    && output_limit(*output_bytes) >= output_limit(*b)
+            }
             (Self::Script { name, output }, Self::Script { name: n, output: o }) => {
                 name == n && (*output || !o)
             }
@@ -532,9 +569,16 @@ impl Scope {
         }
     }
 
-    /// Files and executable profiles are bound, at consent, to a path the user picks.
+    /// Files and executable profiles are bound, at consent, to a path the user picks, unless
+    /// the profile names its program.
     pub fn needs_binding(&self) -> bool {
-        matches!(self, Self::Files { .. } | Self::Exec { .. })
+        matches!(self, Self::Files { .. } | Self::Exec { program: None, .. })
+    }
+
+    /// Whether Dupin may use it when it asks for the package's catalogue, without an action of
+    /// the user's, though any other use needs one.
+    pub fn runs_for_catalogue(&self) -> bool {
+        matches!(self, Self::Exec { catalogue: true, .. })
     }
 }
 
@@ -569,14 +613,29 @@ impl fmt::Display for Scope {
                 });
                 write!(f, "{access} the {kind} you pick for “{name}”")
             }
-            Self::Exec { name, args, output } => {
-                write!(f, "run the program you pick for “{name}”")?;
+            Self::Exec {
+                name,
+                args,
+                output,
+                program,
+                catalogue,
+                output_bytes,
+            } => {
+                match program {
+                    Some(program) => write!(f, "run {program}")?,
+                    None => write!(f, "run the program you pick for “{name}”")?,
+                }
                 for (index, arg) in args.iter().enumerate() {
                     f.write_str(if index == 0 { " with " } else { " " })?;
                     write!(f, "{arg:?}")?;
                 }
-                if *output {
-                    f.write_str(" and read its output")?;
+                match (output, output_bytes) {
+                    (false, _) => {}
+                    (true, None) => f.write_str(" and read its output")?,
+                    (true, Some(bytes)) => write!(f, " and read up to {bytes} bytes of its output")?,
+                }
+                if *catalogue {
+                    f.write_str(", also when Dupin asks it for its list, without an action of yours")?;
                 }
                 Ok(())
             }

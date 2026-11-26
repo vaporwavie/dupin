@@ -431,6 +431,8 @@ pub(crate) mod fixture {
     pub(crate) struct Exec {
         pub(crate) stdout: String,
         pub(crate) runs: Mutex<Vec<(String, BTreeMap<String, exec::Value>)>>,
+        /// What each run ran, and the most output it would hand back per stream.
+        pub(crate) programs: Mutex<Vec<(exec::Target, usize)>>,
     }
 
     impl super::Exec for Arc<Exec> {
@@ -445,6 +447,10 @@ pub(crate) mod fixture {
                 .lock()
                 .unwrap()
                 .push((profile.name().into(), values.clone()));
+            self.programs
+                .lock()
+                .unwrap()
+                .push((profile.target().clone(), profile.options().output_bytes));
             Ok(exec::Outcome {
                 exit: exec::Exit::Code(0),
                 output: profile.options().return_output.then(|| exec::Output {

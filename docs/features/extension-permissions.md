@@ -9,19 +9,19 @@ An extension reaches nothing on its own. It declares the host services it wants 
 }
 ```
 
-| Capability                         | Scope names                                    | While you type   | Needs an action you chose | macOS access  |
-| ---------------------------------- | ---------------------------------------------- | ---------------- | ------------------------- | ------------- |
-| [`http`](#http)                    | `http:<origin>`                                | GET and HEAD     | Any other method          |               |
-| [`files`](#files)                  | `files:<name>`                                 | Reading, listing |                           |               |
-| [`exec`](#exec)                    | `exec:<name>`, `script:<name>`                 |                  | Running a program         |               |
-| [`storage`](#storage)              | `storage`, `storage:sync`                      | Everything       |                           |               |
-| [`dictionary`](#dictionary)        | `dictionary`                                   | Lookups          |                           |               |
-| [`calculator`](#calculator)        | `calculator`                                   | Evaluating       |                           |               |
-| [`snippets`](#snippets)            | `snippets`                                     |                  | Changing snippets         |               |
-| [`calendar`](#calendar)            | `calendar`                                     | Reading events   |                           | Calendars     |
-| [`windows`](#windows)              | `windows:read`, `windows:arrange`              | Reading          | Moving a window           | Accessibility |
-| [`clipboard`](#clipboard)          | `clipboard:read`, `:write`, `:watch`, `:paste` | Watching         | Reading, writing, pasting | Yes           |
-| [`rows`, `query`](#rows-and-query) | `rows:<kind>`, `query`                         | Filters          | Kind actions              |               |
+| Capability                         | Scope names                                    | While you type                           | Needs an action you chose | macOS access  |
+| ---------------------------------- | ---------------------------------------------- | ---------------------------------------- | ------------------------- | ------------- |
+| [`http`](#http)                    | `http:<origin>`                                | GET and HEAD                             | Any other method          |               |
+| [`files`](#files)                  | `files:<name>`                                 | Reading, listing                         |                           |               |
+| [`exec`](#exec)                    | `exec:<name>`, `script:<name>`                 | A `catalogue` profile, for the catalogue | Running any other program |               |
+| [`storage`](#storage)              | `storage`, `storage:sync`                      | Everything                               |                           |               |
+| [`dictionary`](#dictionary)        | `dictionary`                                   | Lookups                                  |                           |               |
+| [`calculator`](#calculator)        | `calculator`                                   | Evaluating                               |                           |               |
+| [`snippets`](#snippets)            | `snippets`                                     |                                          | Changing snippets         |               |
+| [`calendar`](#calendar)            | `calendar`                                     | Reading events                           |                           | Calendars     |
+| [`windows`](#windows)              | `windows:read`, `windows:arrange`              | Reading                                  | Moving a window           | Accessibility |
+| [`clipboard`](#clipboard)          | `clipboard:read`, `:write`, `:watch`, `:paste` | Watching                                 | Reading, writing, pasting | Yes           |
+| [`rows`, `query`](#rows-and-query) | `rows:<kind>`, `query`                         | Filters                                  | Kind actions              |               |
 
 <details>
 <summary>Every capability declared</summary>
@@ -71,7 +71,7 @@ Dupin checks every request against the declaration, the version you allowed and 
 <details>
 <summary>Allowing, denying and revoking</summary>
 
-Settings → Extensions lists the same requests as the panel, and every scope each extension declares with whether it is allowed, with **Allow**, **Revoke** and **Request Access**. A files or exec scope is allowed from Settings, where you pick the file, folder or program. Allowing runs nothing the extension asked for before; use it again. **Deny** revokes the scope until you allow it in Settings.
+Settings → Extensions lists the same requests as the panel, and every scope each extension declares with whether it is allowed, with **Allow**, **Revoke** and **Request Access**. A files or exec scope is allowed from Settings, where you pick the file, folder or program; a profile that names its program needs no pick. Allowing runs nothing the extension asked for before; use it again. **Deny** revokes the scope until you allow it in Settings.
 
 Revoking a scope or turning an extension off takes effect at once: a request in flight finishes, but its result is dropped, the query's rows are dropped with it, and allowing again doesn't bring them back.
 
@@ -80,7 +80,7 @@ Revoking a scope or turning an extension off takes effect at once: a request in 
 <details>
 <summary>What needs an action you chose</summary>
 
-While you type, an extension may use what you allowed to read: GET and HEAD, files, the dictionary, the calculator, calendars, the displays and the focused window, and its own `storage`, writes included. Any other HTTP method, a program or script, reading, writing or pasting from the clipboard, moving a window and changing your snippets need an action you chose. Dupin, not the extension, says which: a query, an event or an action of yours.
+While you type, an extension may use what you allowed to read: GET and HEAD, files, the dictionary, the calculator, calendars, the displays and the focused window, and its own `storage`, writes included. Any other HTTP method, a program or script, reading, writing or pasting from the clipboard, moving a window and changing your snippets need an action you chose. Dupin, not the extension, says which: a query, an event, Dupin asking for the catalogue or an action of yours. The one exception is an exec profile declared `catalogue`, which also runs when Dupin asks for the catalogue: on its first use, and in the background once its `ttl` passes, never for a keystroke.
 
 </details>
 
@@ -214,12 +214,29 @@ export async function search(query) {
 
 ## Exec
 
-`"exec"` declares named profiles, each an argument template, or `@script:<name>` for one of your [script commands](./scripts.md). `exec.run(profile, inputs)` runs one, only in an action; you pick the program when you allow it.
+`"exec"` declares named profiles, each an argument template, or `@script:<name>` for one of your [script commands](./scripts.md). `exec.run(profile, inputs)` runs one, only in an action; you pick the program when you allow it, unless the profile names one of macOS's own.
 
 <details>
 <summary>Profiles, results and an example</summary>
 
-Each profile's `{input}` placeholders take one line of text. A script needs no pick. `output: true` asks to receive stdout and stderr. `exec.run` returns `code`, `signal`, `timedOut` and, with output allowed, `stdout`, `stderr` and `truncated`.
+Each profile's `{input}` placeholders take one line of text. A script needs no pick. `output: true` asks to receive stdout and stderr, each up to `outputBytes` (64 KiB unless declared, 1 MiB at most). `exec.run` returns `code`, `signal`, `timedOut` and, with output allowed, `stdout`, `stderr` and `truncated`.
+
+| Profile field | Value                                                                                                                                                                                                                                                                                                       |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `args`        | Required. The argument template, up to 32 entries.                                                                                                                                                                                                                                                          |
+| `output`      | `true` hands the extension stdout and stderr.                                                                                                                                                                                                                                                               |
+| `outputBytes` | With `output`, the most of each stream it receives: 1 byte to 1 MiB, 64 KiB without it.                                                                                                                                                                                                                     |
+| `program`     | A program of macOS's own, in `/bin`, `/sbin`, `/usr/bin`, `/usr/sbin`, `/usr/libexec` or `/System` outside `/System/Volumes`, which System Integrity Protection keeps from being replaced. Consent names it, and you pick nothing. A bundled extension that ships with it holds the profile from the start. |
+| `catalogue`   | `true` lets the profile run when Dupin asks for the extension's [catalogue](./extension-api.md#itemsctx), without an action of yours, so a list of what a program reports refreshes on its own. Its `search`, views and event handlers still can't run it, and an action still can.                         |
+
+A catalogue profile is how an extension lists what a program such as `ps` reports every few seconds while you look at it, without running a program as you type: Dupin asks for the catalogue on first use and then in the background each time its `ttl` passes.
+
+```json
+"exec": {
+	"processes": { "program": "/bin/ps", "args": ["-axww", "-o", "pid=,comm="], "output": true, "outputBytes": 1048576, "catalogue": true },
+	"terminate": { "program": "/bin/kill", "args": ["-TERM", "{pid}"] }
+}
+```
 
 ```js
 import { exec } from 'dupin';

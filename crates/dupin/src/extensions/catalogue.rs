@@ -1,7 +1,8 @@
 //! The `items()` catalogue Dupin holds for each loaded package revision. It is asked for on
 //! first use, after an action invalidates it and once its `ttl` passes, never per keystroke:
-//! typing matches the rows held here natively. A package revision Dupin reloads starts a new,
-//! empty catalogue with the new [`super::Extension`].
+//! typing matches the rows held here natively. Once the `ttl` passes, typing goes on matching
+//! the rows held while [`Cached::refresh`] asks for new ones in the background. A package
+//! revision Dupin reloads starts a new, empty catalogue with the new [`super::Extension`].
 //!
 //! A catalogue may read the package's storage, files or the network, as a search may, so it
 //! belongs to the broker generation it was asked under: once the package's authority changes,
@@ -11,7 +12,7 @@
 //! to disk would keep what a package lists, such as clipboard history, past the package's own
 //! say; a package that wants its list to outlast a restart keeps it in its own storage.
 
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
@@ -70,6 +71,8 @@ struct Shared {
     /// Counts [`Cached::forget`] calls outside the lock, which a catalogue being filled holds
     /// for as long as the package takes, so forgetting never waits for it.
     forgotten: AtomicU64,
+    /// A [`Cached::refresh`] is asking the package, outside the lock.
+    refreshing: AtomicBool,
 }
 
 struct State {
@@ -87,6 +90,9 @@ struct State {
     /// The preferences the last ask failed with, while nothing else has changed since that
     /// could make the next one succeed.
     failed: Option<Arc<Preferences>>,
+    /// Counts the changes to the rows, so a refresh that asked outside the lock can tell that
+    /// rows it didn't ask for arrived meanwhile.
+    changes: u64,
 }
 
 impl Default for Cached {
@@ -112,10 +118,12 @@ impl Cached {
                 generation: None,
                 forgotten: 0,
                 failed: None,
+                changes: 0,
             }),
             bytes: AtomicUsize::new(0),
             used: AtomicU64::new(0),
             forgotten: AtomicU64::new(0),
+            refreshing: AtomicBool::new(false),
         });
         held()
             .lock()
@@ -176,7 +184,6 @@ impl Cached {
         let state = self.shared.state.try_lock().ok()?;
         let current = state.due.is_none()
             && state.forgotten == self.shared.forgotten.load(Ordering::Acquire)
-            && !state.expires.is_some_and(|expires| Instant::now() >= expires)
             && state
                 .preferences
                 .as_ref()
@@ -217,6 +224,85 @@ impl Cached {
         drop(state);
         self.keep_within_budget();
         Ok(read)
+    }
+
+    /// When the rows held expire, if they do. Rows past it are still used until
+    /// [`Cached::refresh`] replaces them. It waits for a search filling the catalogue.
+    pub fn expires(&self) -> Option<Instant> {
+        self.shared.lock().expires
+    }
+
+    /// Asks the package again for rows that expired, without holding up searches meanwhile:
+    /// they go on matching the rows held until the new ones replace them in one step. Does
+    /// nothing, and reports `false`, unless rows asked for under `asking` expired, or while
+    /// another refresh asks. Rows asked for meanwhile from the start, after a change of
+    /// preferences, generation or an invalidation, are kept rather than replaced.
+    pub fn refresh(
+        &self,
+        asking: Asking<'_>,
+        fetch: &mut Fetch<'_>,
+        convert: &dyn Convert,
+    ) -> Result<bool, RunError> {
+        if self.shared.refreshing.swap(true, Ordering::AcqRel) {
+            return Ok(false);
+        }
+        let _refreshing = Refreshing(&self.shared.refreshing);
+        let (mut cursor, changes) = {
+            let state = self.shared.lock();
+            let forgotten = self.shared.forgotten.load(Ordering::Acquire);
+            if !state.holds(asking, forgotten) || !state.expired(Instant::now()) {
+                return Ok(false);
+            }
+            (state.cursor.clone(), state.changes)
+        };
+        let mut pages = Vec::new();
+        let mut reason = Reason::Expired;
+        let asked = loop {
+            if pages.len() == MAX_PARTS {
+                break Err(too_many_parts());
+            }
+            match fetch(cursor.as_deref(), reason, asking.preferences) {
+                Ok(page) => {
+                    let more = page.more;
+                    cursor.clone_from(&page.cursor);
+                    pages.push(page);
+                    if !more {
+                        break Ok(());
+                    }
+                    reason = Reason::More;
+                }
+                Err(error) => break Err(error),
+            }
+        };
+        let mut state = self.shared.lock();
+        if !state.holds(asking, self.shared.forgotten.load(Ordering::Acquire)) || state.changes != changes {
+            return Ok(false);
+        }
+        let now = Instant::now();
+        let taken = asked.and_then(|()| {
+            pages
+                .into_iter()
+                .try_for_each(|page| state.take(page, now, asking.preferences, convert).map(drop))
+        });
+        if taken.is_err() {
+            state.forget();
+        }
+        self.shared
+            .bytes
+            .store(state.catalogue.bytes(), Ordering::Relaxed);
+        drop(state);
+        taken?;
+        self.keep_within_budget();
+        Ok(true)
+    }
+
+    /// Lets the rows held expire now, as their `ttl` passing would.
+    #[cfg(test)]
+    pub fn expire(&self) {
+        let mut state = self.shared.lock();
+        if state.expires.is_some() {
+            state.expires = Some(Instant::now());
+        }
     }
 
     /// How many rows the catalogue holds.
@@ -275,8 +361,12 @@ impl State {
         self.due = Some(Reason::Load);
         self.preferences = None;
         self.failed = None;
+        self.changes += 1;
     }
 
+    /// Asks the package before the rows are used when they are missing, invalidated or asked
+    /// for with other preferences. Rows that only expired are used as they are: typing never
+    /// waits for them, and [`Cached::refresh`] asks for them again in the background.
     fn refresh(
         &mut self,
         now: Instant,
@@ -284,16 +374,11 @@ impl State {
         fetch: &mut Fetch<'_>,
         convert: &dyn Convert,
     ) -> Result<(), RunError> {
-        let expired = self.expires.is_some_and(|expires| now >= expires);
         let changed = self
             .preferences
             .as_ref()
             .is_some_and(|held| !Arc::ptr_eq(held, preferences));
-        let Some(mut reason) = changed
-            .then_some(Reason::Load)
-            .or(self.due)
-            .or(expired.then_some(Reason::Expired))
-        else {
+        let Some(mut reason) = changed.then_some(Reason::Load).or(self.due) else {
             return Ok(());
         };
         if reason == Reason::Load {
@@ -306,43 +391,87 @@ impl State {
                 self.cursor.clone()
             };
             let page = fetch(cursor.as_deref(), reason, preferences).inspect_err(|_| self.forget())?;
-            let change = match page.change {
-                PageChange::Reset { rows } => {
-                    Change::Reset(rows.into_iter().map(|row| convert.entry(row)).collect())
-                }
-                PageChange::Update {
-                    prepend,
-                    append,
-                    replace,
-                    remove,
-                } => Change::Update {
-                    prepend: prepend.into_iter().map(|row| convert.entry(row)).collect(),
-                    append: append.into_iter().map(|row| convert.entry(row)).collect(),
-                    replace: replace.into_iter().map(|row| convert.entry(row)).collect(),
-                    remove: remove.iter().map(|id| convert.entry_id(id)).collect(),
-                },
-            };
-            if let Err(problem) = self.catalogue.apply(change, LIMITS) {
-                self.forget();
-                return Err(RunError::Failed(rejected(&problem)));
-            }
-            self.cursor = page.cursor;
-            self.expires = page.ttl.map(|seconds| now + Duration::from_secs(seconds.into()));
-            if !page.more {
-                self.due = None;
-                self.preferences = Some(preferences.clone());
+            if !self.take(page, now, preferences, convert)? {
                 return Ok(());
             }
             reason = Reason::More;
         }
         self.forget();
-        Err(RunError::Failed(
-            Diagnostic::new(
-                "too-many-parts",
-                format!("items kept answering `more: true` after {MAX_PARTS} parts"),
-            )
-            .hint("Set `more` only while rows are left to send."),
-        ))
+        Err(too_many_parts())
+    }
+
+    /// Applies one part, and reports whether more follow.
+    fn take(
+        &mut self,
+        page: CataloguePage,
+        now: Instant,
+        preferences: &Arc<Preferences>,
+        convert: &dyn Convert,
+    ) -> Result<bool, RunError> {
+        let change = match page.change {
+            PageChange::Reset { rows } => {
+                Change::Reset(rows.into_iter().map(|row| convert.entry(row)).collect())
+            }
+            PageChange::Update {
+                prepend,
+                append,
+                replace,
+                remove,
+            } => Change::Update {
+                prepend: prepend.into_iter().map(|row| convert.entry(row)).collect(),
+                append: append.into_iter().map(|row| convert.entry(row)).collect(),
+                replace: replace.into_iter().map(|row| convert.entry(row)).collect(),
+                remove: remove.iter().map(|id| convert.entry_id(id)).collect(),
+            },
+        };
+        self.changes += 1;
+        if let Err(problem) = self.catalogue.apply(change, LIMITS) {
+            self.forget();
+            return Err(RunError::Failed(rejected(&problem)));
+        }
+        self.cursor = page.cursor;
+        self.expires = page.ttl.map(|seconds| now + Duration::from_secs(seconds.into()));
+        if page.more {
+            return Ok(true);
+        }
+        self.due = None;
+        self.preferences = Some(preferences.clone());
+        Ok(false)
+    }
+
+    fn expired(&self, now: Instant) -> bool {
+        self.expires.is_some_and(|expires| now >= expires)
+    }
+
+    /// Whether rows asked for under `asking` with the forget count `forgotten` may replace
+    /// the ones held: nothing that asks for them from the start happened meanwhile.
+    fn holds(&self, asking: Asking<'_>, forgotten: u64) -> bool {
+        self.due.is_none()
+            && self.generation == asking.generation
+            && self.forgotten == forgotten
+            && self
+                .preferences
+                .as_ref()
+                .is_some_and(|held| Arc::ptr_eq(held, asking.preferences))
+    }
+}
+
+fn too_many_parts() -> RunError {
+    RunError::Failed(
+        Diagnostic::new(
+            "too-many-parts",
+            format!("items kept answering `more: true` after {MAX_PARTS} parts"),
+        )
+        .hint("Set `more` only while rows are left to send."),
+    )
+}
+
+/// Clears [`Shared::refreshing`] however a refresh ends.
+struct Refreshing<'a>(&'a AtomicBool);
+
+impl Drop for Refreshing<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
     }
 }
 
@@ -664,12 +793,21 @@ mod tests {
         cached
             .search("", 10, keyword(&none()), &mut fetch, ENTRY)
             .unwrap();
-        cached.shared.lock().expires = Some(Instant::now());
         assert!(
-            cached
-                .search("", 10, keyword(&none()), &mut fetch, ENTRY)
-                .is_err()
+            !cached.refresh(keyword(&none()), &mut fetch, ENTRY).unwrap(),
+            "not expired yet"
         );
+        cached.shared.lock().expires = Some(Instant::now());
+        assert_eq!(
+            titles(
+                &cached
+                    .search("", 10, keyword(&none()), &mut fetch, ENTRY)
+                    .unwrap()
+            ),
+            ["A"],
+            "typing matches the expired rows without asking"
+        );
+        assert!(cached.refresh(keyword(&none()), &mut fetch, ENTRY).is_err());
         assert_eq!(cached.len(), 0);
         assert_eq!(
             titles(
@@ -680,6 +818,153 @@ mod tests {
             ["B"]
         );
         assert_eq!(reasons, [Reason::Load, Reason::Expired, Reason::Load]);
+    }
+
+    #[test]
+    fn a_refresh_replaces_expired_rows_in_one_step_while_typing_matches_the_old_ones() {
+        let cached = Arc::new(Cached::default());
+        let first = |_: Option<&str>, _, _: &Arc<Preferences>| {
+            Ok(CataloguePage {
+                ttl: Some(1),
+                ..page(
+                    PageChange::Reset {
+                        rows: vec![row("a", "Old")],
+                    },
+                    "1",
+                    false,
+                )
+            })
+        };
+        cached
+            .search("", 10, keyword(&none()), &mut { first }, ENTRY)
+            .unwrap();
+        cached.shared.lock().expires = Some(Instant::now());
+        let (asked, answer) = (std::sync::mpsc::channel(), std::sync::mpsc::channel::<()>());
+        let refreshing = {
+            let cached = cached.clone();
+            let (asked, answer) = (asked.0, answer.1);
+            std::thread::spawn(move || {
+                let mut parts = Vec::new();
+                let mut fetch = |cursor: Option<&str>, reason, _: &Arc<Preferences>| {
+                    parts.push((cursor.map(str::to_owned), reason));
+                    if parts.len() == 1 {
+                        asked.send(()).unwrap();
+                        answer.recv().unwrap();
+                        return Ok(page(
+                            PageChange::Reset {
+                                rows: vec![row("b", "New")],
+                            },
+                            "2",
+                            true,
+                        ));
+                    }
+                    Ok(page(
+                        PageChange::Update {
+                            prepend: Vec::new(),
+                            append: vec![row("c", "Newer")],
+                            replace: Vec::new(),
+                            remove: Vec::new(),
+                        },
+                        "3",
+                        false,
+                    ))
+                };
+                let refreshed = cached.refresh(keyword(&none()), &mut fetch, ENTRY).unwrap();
+                (refreshed, parts)
+            })
+        };
+        asked.1.recv().unwrap();
+        let mut never = |_: Option<&str>, _, _: &Arc<Preferences>| -> Result<CataloguePage, RunError> {
+            panic!("typing asked the package")
+        };
+        assert_eq!(
+            titles(
+                &cached
+                    .search("", 10, keyword(&none()), &mut never, ENTRY)
+                    .unwrap()
+            ),
+            ["Old"],
+            "a search during the refresh neither waits nor asks"
+        );
+        assert!(
+            !cached.refresh(keyword(&none()), &mut never, ENTRY).unwrap(),
+            "one refresh at a time"
+        );
+        answer.0.send(()).unwrap();
+        let (refreshed, parts) = refreshing.join().unwrap();
+        assert!(refreshed);
+        assert_eq!(
+            parts,
+            [
+                (Some("1".into()), Reason::Expired),
+                (Some("2".into()), Reason::More)
+            ]
+        );
+        assert_eq!(
+            titles(
+                &cached
+                    .search("", 10, keyword(&none()), &mut never, ENTRY)
+                    .unwrap()
+            ),
+            ["New", "Newer"]
+        );
+        assert_eq!(cached.expires(), None, "the last part gave no ttl");
+    }
+
+    #[test]
+    fn a_refresh_started_before_an_invalidation_keeps_what_the_invalidation_asked_for() {
+        let cached = Cached::default();
+        let mut answers = vec![
+            CataloguePage {
+                ttl: Some(1),
+                ..page(
+                    PageChange::Reset {
+                        rows: vec![row("a", "First")],
+                    },
+                    "1",
+                    false,
+                )
+            },
+            page(
+                PageChange::Reset {
+                    rows: vec![row("b", "Invalidated")],
+                },
+                "2",
+                false,
+            ),
+        ]
+        .into_iter();
+        let mut fetch = |_: Option<&str>, _, _: &Arc<Preferences>| Ok(answers.next().unwrap());
+        cached
+            .search("", 10, keyword(&none()), &mut fetch, ENTRY)
+            .unwrap();
+        cached.shared.lock().expires = Some(Instant::now());
+        let mut stale = |_: Option<&str>, _, _: &Arc<Preferences>| {
+            cached.invalidate();
+            let mut fetch = |_: Option<&str>, _, _: &Arc<Preferences>| Ok(answers.next().unwrap());
+            cached
+                .search("", 10, keyword(&none()), &mut fetch, ENTRY)
+                .unwrap();
+            Ok(page(
+                PageChange::Reset {
+                    rows: vec![row("c", "Stale")],
+                },
+                "3",
+                false,
+            ))
+        };
+        assert!(!cached.refresh(keyword(&none()), &mut stale, ENTRY).unwrap());
+        let mut never = |_: Option<&str>, _, _: &Arc<Preferences>| -> Result<CataloguePage, RunError> {
+            panic!("asked again")
+        };
+        assert_eq!(
+            titles(
+                &cached
+                    .search("", 10, keyword(&none()), &mut never, ENTRY)
+                    .unwrap()
+            ),
+            ["Invalidated"]
+        );
     }
 
     #[test]
@@ -1097,7 +1382,11 @@ mod tests {
         assert_eq!(cached.held_web_searches(&first), None);
 
         cached.shared.lock().expires = Some(Instant::now());
-        assert_eq!(cached.held_web_searches(&changed), None, "expired");
+        assert_eq!(
+            cached.held_web_searches(&changed).unwrap().len(),
+            1,
+            "expired rows stay in use until a refresh replaces them"
+        );
         cached.shared.lock().expires = None;
         let filling = cached.shared.lock();
         assert_eq!(cached.held_web_searches(&changed), None, "being filled");

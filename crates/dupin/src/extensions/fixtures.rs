@@ -217,12 +217,23 @@ impl<'a> Held<'a> {
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Vec<Row>, RunError> {
         let deadline = Instant::now() + QUERY_DEADLINE;
-        let mut fetch = self.extension.fetch(host, deadline, cancelled, &call.services);
+        let mut fetch = self.extension.fetch(
+            host,
+            super::Fetching::Resident,
+            deadline,
+            cancelled,
+            &call.catalogue,
+        );
         let asking = Asking {
             preferences,
             generation: call.generation,
             role: super::Role::Keyword,
         };
+        // The launcher refreshes an expired catalogue in the background and searches again
+        // once it has; a replay does both before the step, so the step sees the new rows.
+        self.cached
+            .refresh(asking, &mut fetch, self)
+            .map_err(|error| self.extension.located(error))?;
         let batches = self
             .cached
             .search(query, limit, asking, &mut fetch, self)

@@ -17,6 +17,9 @@ fn every_capability_parses_into_its_scopes() {
                 name: name("git-status"),
                 args: vec!["status".into(), "--short".into(), "{path}".into()],
                 output: true,
+                program: None,
+                catalogue: false,
+                output_bytes: None,
             },
             Scope::Script {
                 name: name("open-in-zed"),
@@ -189,6 +192,70 @@ fn exec_profiles_need_well_formed_argument_templates() {
     assert_eq!(
         problem(json!({ "exec": { "run": { "args": [], "output": "yes" } } })),
         ("invalid-type", "capabilities.exec.run.output".into())
+    );
+}
+
+#[test]
+fn a_profile_names_only_a_program_of_macos_own_and_bounds_only_output_it_reads() {
+    let parsed = caps(json!({ "exec": { "ps": {
+        "program": "/bin/ps",
+        "args": ["-ax"],
+        "output": true,
+        "outputBytes": 1_048_576,
+        "catalogue": true,
+    } } }));
+    assert_eq!(
+        parsed.get(&key("exec:ps")),
+        Some(&Scope::Exec {
+            name: name("ps"),
+            args: vec!["-ax".into()],
+            output: true,
+            program: Some("/bin/ps".into()),
+            catalogue: true,
+            output_bytes: Some(1_048_576),
+        })
+    );
+    for bad in [
+        "ps",
+        "/opt/homebrew/bin/rg",
+        "/Users/me/bin/tool",
+        "/usr/local/bin/tool",
+        "/System/Volumes/Data/Users/me/tool",
+        "/bin/../Users/me/tool",
+        "/usr/bin//env",
+        "/usr/bin/",
+        "/bin",
+        "/bin/./ps",
+        "/bin/p\u{202e}s",
+    ] {
+        assert_eq!(
+            problem(json!({ "exec": { "run": { "program": bad, "args": [] } } })),
+            ("invalid-value", "capabilities.exec.run.program".into()),
+            "{bad:?}"
+        );
+    }
+    for good in [
+        "/usr/sbin/lsof",
+        "/usr/libexec/PlistBuddy",
+        "/System/Library/CoreServices/x",
+    ] {
+        assert!(Capabilities::parse(&json!({ "exec": { "run": { "program": good, "args": [] } } })).is_ok());
+    }
+    assert_eq!(
+        problem(json!({ "exec": { "run": { "args": [], "outputBytes": 10 } } })),
+        ("invalid-value", "capabilities.exec.run.outputBytes".into())
+    );
+    assert_eq!(
+        problem(json!({ "exec": { "run": { "args": [], "output": true, "outputBytes": 1_048_577 } } })),
+        ("out-of-range", "capabilities.exec.run.outputBytes".into())
+    );
+    assert_eq!(
+        problem(json!({ "exec": { "run": { "args": [], "catalogue": "yes" } } })),
+        ("invalid-type", "capabilities.exec.run.catalogue".into())
+    );
+    assert_eq!(
+        problem(json!({ "exec": { "@script:open": { "catalogue": true } } })),
+        ("unknown-field", "capabilities.exec.@script:open.catalogue".into())
     );
 }
 

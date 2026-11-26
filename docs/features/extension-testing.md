@@ -285,7 +285,7 @@ A step's `activate` may name an action by the ID the launcher gives it: `copy`, 
 
 A query step answers as the keyword does: `search`'s rows for a query that isn't blank, then the `items()` catalogue's matches, ranked by Dupin's own matcher (without usage history, which a fixture doesn't have) and losing their `section` once the query ranks them, then its web searches filled with the query.
 
-The fixture holds the catalogue from step to step as the launcher does, so an `activate` or `event` step whose handler calls `items.invalidate()` has `invalidated: true` in its outcome, and the next query asks `items` with `reason` `"invalidated"` and the cursor and applies the update it answers.
+The fixture holds the catalogue from step to step as the launcher does, so an `activate` or `event` step whose handler calls `items.invalidate()` has `invalidated: true` in its outcome, and the next query asks `items` with `reason` `"invalidated"` and the cursor and applies the update it answers. A catalogue whose `ttl` passed between steps is asked again with `reason` `"expired"` before the next query, which the launcher does in the background and then searches again. `items` asks under the catalogue trigger, so an exec profile declared `catalogue` answers from the fixture's `exec` replies there, and only there short of an `activate` step.
 
 </details>
 

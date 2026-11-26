@@ -106,10 +106,36 @@ fn an_approval_covers_the_same_or_a_narrower_declaration_only() {
         name: name("git"),
         args: args.iter().map(|arg| arg.to_string()).collect(),
         output,
+        program: None,
+        catalogue: false,
+        output_bytes: None,
     };
     assert!(exec(&["status"], true).covers(&exec(&["status"], false)));
     assert!(!exec(&["status"], false).covers(&exec(&["status"], true)));
     assert!(!exec(&["status"], true).covers(&exec(&["push"], true)));
+
+    let named = |program: Option<&str>, catalogue, output_bytes| Scope::Exec {
+        name: name("ps"),
+        args: vec!["-ax".into()],
+        output: true,
+        program: program.map(str::to_owned),
+        catalogue,
+        output_bytes,
+    };
+    let ps = Some("/bin/ps");
+    assert!(named(ps, true, None).covers(&named(ps, false, None)));
+    assert!(
+        !named(ps, false, None).covers(&named(ps, true, None)),
+        "running for a catalogue, without an action, asks again"
+    );
+    assert!(!named(ps, false, None).covers(&named(Some("/bin/kill"), false, None)));
+    assert!(!named(None, false, None).covers(&named(ps, false, None)));
+    assert!(!named(ps, false, None).covers(&named(None, false, None)));
+    assert!(named(ps, false, Some(1 << 20)).covers(&named(ps, false, None)));
+    assert!(named(ps, false, None).covers(&named(ps, false, Some(1024))));
+    assert!(!named(ps, false, None).covers(&named(ps, false, Some(1 << 20))));
+    assert!(!named(ps, false, None).needs_binding() && named(None, false, None).needs_binding());
+    assert!(named(ps, true, None).runs_for_catalogue() && !named(ps, false, None).runs_for_catalogue());
 
     let script = |output| Scope::Script {
         name: name("zed"),
@@ -192,6 +218,9 @@ fn exec_consent_shows_where_each_argument_starts_and_ends() {
             name: ScopeName::new("run").unwrap(),
             args: args.iter().map(|arg| (*arg).to_owned()).collect(),
             output: false,
+            program: None,
+            catalogue: false,
+            output_bytes: None,
         }
         .to_string()
     };
@@ -199,6 +228,18 @@ fn exec_consent_shows_where_each_argument_starts_and_ends() {
     assert_eq!(
         exec(&["a`, and nothing else", "--install-extension", "x"]),
         "run the program you pick for “run” with \"a`, and nothing else\" \"--install-extension\" \"x\""
+    );
+    let named = Scope::Exec {
+        name: ScopeName::new("ps").unwrap(),
+        args: vec!["-ax".into()],
+        output: true,
+        program: Some("/bin/ps".into()),
+        catalogue: true,
+        output_bytes: Some(1_048_576),
+    };
+    assert_eq!(
+        named.to_string(),
+        "run /bin/ps with \"-ax\" and read up to 1048576 bytes of its output, also when Dupin asks it for its list, without an action of yours"
     );
 }
 

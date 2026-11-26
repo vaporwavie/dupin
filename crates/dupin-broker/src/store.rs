@@ -78,7 +78,8 @@ impl BasePackage {
             return Err(format!("`{key}` is both granted and denied"));
         }
         for key in &package.grant {
-            if matches!(key, ScopeKey::Files(_) | ScopeKey::Exec(_)) && !package.bindings.contains_key(key) {
+            // An exec profile may name its own program, which only the declaration says.
+            if matches!(key, ScopeKey::Files(_)) && !package.bindings.contains_key(key) {
                 return Err(format!("`{key}` needs a path in `bindings`"));
             }
         }
