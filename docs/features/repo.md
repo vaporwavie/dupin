@@ -18,7 +18,7 @@ Switch on **Repositories** in Settings → Extensions, allow the folders and pro
 
 - Every repository `ghq list` prints and every folder holding `.git` in `~/ghq`, `~/src`, `~/Developer` and `~/Projects`, each once, by name, with its owner and host, such as `ryoppippi · github.com`.
 - Those with a known last commit first, newest first, with how long ago it was; the rest by name.
-- For a repository whose Git status Dupin has read: its branch, how far it is ahead of or behind its upstream, how many files are changed and when Dupin read it, such as `main ↓3` and `checked 09:00`.
+- For a repository whose Git status Dupin has read: its branch, how far it is ahead of or behind its upstream, how many files are changed and how long ago Dupin read it, such as `main ↓3` and `2 min ago`.
 - For the selected row: its path, branch, working tree, upstream, last commit, remote and when Dupin last read it.
 
 <picture>

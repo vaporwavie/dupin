@@ -304,7 +304,7 @@ function tags(status: Status | undefined): Accessory[] {
 	tags.push({ tag: fit([status.branch ?? 'detached', drift].filter(Boolean).join(' '), 64) });
 	if (status.changes > 0)
 		tags.push({ tag: status.changes === 1 ? '1 change' : `${status.changes} changes` });
-	tags.push({ text: `checked ${clock(status.at)}` });
+	tags.push({ freshness: status.at });
 	return tags;
 }
 
@@ -517,15 +517,6 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 
 function two(value: number): string {
 	return String(value).padStart(2, '0');
-}
-
-/** `14:05` today, `25 Nov` before. */
-function clock(ms: number): string {
-	const when = new Date(ms);
-	const now = new Date();
-	if (when.toDateString() === now.toDateString())
-		return `${two(when.getHours())}:${two(when.getMinutes())}`;
-	return `${when.getDate()} ${MONTHS[when.getMonth()]}`;
 }
 
 /** `25 Nov 2026, 14:05`. */

@@ -54,7 +54,7 @@ function row(index) {
 		accessories: [
 			{ tag: branches[index % branches.length] },
 			...(index % 5 === 0 ? [{ tag: `${index % 7} changes` }] : []),
-			{ text: 'checked 09:00' },
+			{ freshness: NOW - (index % 9) * 60 * 1000 },
 		],
 		actions: [
 			{ title: 'Open in Editor', run: 'openEditor', data },
