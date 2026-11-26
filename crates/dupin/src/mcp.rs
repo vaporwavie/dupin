@@ -241,7 +241,8 @@ fn read_line(input: &mut impl BufRead, cap: usize) -> io::Result<Option<Line>> {
         if !oversized {
             if chunk.len() > cap - line.len() {
                 oversized = true;
-                line = Vec::new();
+                line.clear();
+                line.shrink_to_fit();
             } else {
                 line.extend_from_slice(chunk);
             }
