@@ -24,7 +24,7 @@ mod snippets;
 mod thumbnails;
 mod usage;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::atomic::AtomicUsize;
@@ -121,6 +121,8 @@ pub struct Ui {
     pub(crate) thumbnails: thumbnails::Thumbnails,
     /// The rows the windowed result list last showed.
     visible_rows: std::ops::Range<usize>,
+    /// How far down the result list is scrolled, as it last drew.
+    pub(crate) list_offset: Rc<Cell<f32>>,
     /// Between `show` and `hide`: the backdrop animates only then.
     pub shown: bool,
     /// The clock when the panel last showed, and when the query last changed.
@@ -195,9 +197,11 @@ impl Ui {
         let composition = crate::composition::Composition::native(dupin_mac::kinds::native());
         composition.apply(&config.advanced);
         let kinds = composition.kinds().clone();
-        let apps_provider = Arc::new(AppsProvider::standard(
-            composition.rows(crate::features::apps::SOURCE),
-        ));
+        let app_rows = composition.rows(crate::features::apps::SOURCE);
+        let apps_provider = Arc::new(match crate::features::apps::headless_roots() {
+            Some(roots) => AppsProvider::with_roots(roots, app_rows),
+            None => AppsProvider::standard(app_rows),
+        });
         let currency = crate::calculator::Currency::start({
             let me = me.clone();
             move || {
@@ -313,6 +317,7 @@ impl Ui {
             icons: HashMap::new(),
             thumbnails: thumbnails::Thumbnails::new(),
             visible_rows: 0..0,
+            list_offset: Rc::default(),
             shown: false,
             shown_at: 0.0,
             caller_hold: CallerHold::default(),

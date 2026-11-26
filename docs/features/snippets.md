@@ -2,6 +2,11 @@
 
 Type `snip`, then Space, to list your snippets ("Snippets"); type to narrow them by name or keyword. Each row shows the snippet's name, its keyword and the start of its text, and a snippet from `config.toml` is tagged **config.toml**. Enter copies the text, with any date, time or clipboard placeholders filled in, and closes the panel; paste it wherever you like. Backspace on an empty query returns to app search.
 
+<picture>
+<source media="(prefers-color-scheme: dark)" srcset="../images/snippets/list-dark.png" />
+<img alt="The snippets list: Add Snippet, then Home address, Quote the clipboard, Email signature and Checked stamp, each with its keyword, the start of its text and a config.toml tag." src="../images/snippets/list-light.png" width="680" />
+</picture>
+
 With pasting turned on in Settings → Search, Enter pastes the snippet into the app you were using and ⌘Enter only copies it. The actions screen (Right Arrow or ⌘K) offers both. Turning on **Paste snippets** in Settings requests Accessibility access when needed. Snippets don't expand as you type in other apps.
 
 Snippets you use often rank higher, as apps do.
@@ -9,6 +14,11 @@ Snippets you use often rank higher, as apps do.
 ## Adding and editing
 
 The first row, **Add Snippet**, opens a form with a name, a keyword and the text; ⌘Enter saves it, and Esc leaves without saving. A snippet you added also offers **Edit Snippet** and **Delete Snippet** on its actions screen, and every row offers **Add Snippet**. Settings → Snippets lists every snippet and adds, edits and deletes the ones stored in Dupin there too.
+
+<picture>
+<source media="(prefers-color-scheme: dark)" srcset="../images/settings/snippets-dark.png" />
+<img alt="Settings → Snippets: an Add Snippet button above Home address, Quote the clipboard, Email signature and Checked stamp, each with its keyword and text and marked From config.toml." src="../images/settings/snippets-light.png" width="760" />
+</picture>
 
 Dupin stores the snippets you add in its [encrypted storage](./storage.md), never in `config.toml`. A snippet is checked as `config.toml`'s are, below: a keyword another snippet has, in storage or in `config.toml`, is refused with a message under the field. The launcher's form holds up to 16 KiB of text; a longer snippet is edited in Settings, and its row offers no Edit Snippet.
 

@@ -27,6 +27,21 @@ export def scenario-env [script: path, tmp: path]: nothing -> record {
     } else {
         {}
     }
+    # And a home folder of its own, as `<name>.home/`: apps in `Applications`, and the usage
+    # history in `Library/Application Support/Dupin/history.json`, where `$HOME` stands for the
+    # copy's path, as the history names apps by path.
+    let home = $script | path parse | update extension home | path join
+    let data = if ($home | path exists) {
+        let copy = $tmp | path join $"($name)-home"
+        cp --recursive $home $copy
+        let history = $copy | path join Library 'Application Support' Dupin history.json
+        if ($history | path exists) {
+            open --raw $history | str replace --all '$HOME' $copy | save --force $history
+        }
+        $data | merge {HOME: $copy}
+    } else {
+        $data
+    }
     # And a clipboard history of its own, as `<name>.clipboard/history.json` beside the images it
     # names, in place of the shared one, which the latency baselines are fingerprinted by.
     let clipboard = $script | path parse | update extension clipboard | path join | path join history.json
@@ -37,5 +52,22 @@ export def scenario-env [script: path, tmp: path]: nothing -> record {
         } | merge $data
     } else {
         {XDG_CONFIG_HOME: $config_dir} | merge $data
+    }
+}
+
+# The panel's height in points, rounded up, from a `--tree` dump.
+export def panel-height []: record -> int {
+    let panel = $in.elements | where key? == "panel" and rect != null
+    if ($panel | is-empty) {
+        error make {msg: "the tree has no laid-out element keyed `panel`"}
+    }
+    $panel | first | get rect.3 | math ceil
+}
+
+# Run Dupin headless, quietly unless it fails.
+export def --wrapped headless [bin: path, ...args: string]: nothing -> nothing {
+    let result = ^$bin ...$args | complete
+    if $result.exit_code != 0 {
+        error make {msg: $"($bin) ($args | str join ' ') failed:\n($result.stderr)"}
     }
 }
