@@ -12,11 +12,14 @@ fn every_capability_parses_into_its_scopes() {
                 name: name("notes"),
                 kind: FilesKind::Directory,
                 access: [FilesAccess::Read, FilesAccess::List].into(),
+                path: None,
             },
             Scope::Exec {
                 name: name("git-status"),
                 args: vec!["status".into(), "--short".into(), "{path}".into()],
                 output: true,
+                program: None,
+                background: false,
                 ssh_agent: false,
             },
             Scope::Script {
@@ -211,6 +214,8 @@ fn an_exec_profile_may_ask_for_the_ssh_agent() {
             name: name("ssh"),
             args: vec!["{host}".into()],
             output: false,
+            program: None,
+            background: false,
             ssh_agent: true,
         }]
     );
@@ -436,4 +441,71 @@ fn rows_name_a_kind_and_its_own_fields_and_the_query_is_read() {
         assert_eq!(key(text).to_string(), text);
     }
     assert!("rows:folder".parse::<ScopeKey>().is_err());
+}
+
+#[test]
+fn a_scope_may_name_its_folder_or_program() {
+    let parsed = caps(json!({
+        "files": { "src": { "kind": "directory", "access": ["list"], "path": "~/src" } },
+        "exec": {
+            "status": {
+                "program": "/usr/bin/git",
+                "args": ["-C", "{path}", "status"],
+                "output": true,
+                "background": true
+            }
+        }
+    }));
+    let files = parsed.get(&key("files:src")).unwrap();
+    assert_eq!(files.declared_path().map(DeclaredPath::as_str), Some("~/src"));
+    assert!(!files.needs_pick() && files.needs_binding());
+    assert_eq!(
+        files
+            .declared_path()
+            .unwrap()
+            .resolve(std::path::Path::new("/Users/me")),
+        std::path::PathBuf::from("/Users/me/src")
+    );
+    assert_eq!(files.to_string(), "list the folder ~/src");
+    let exec = parsed.get(&key("exec:status")).unwrap();
+    assert!(matches!(exec, Scope::Exec { background: true, .. }));
+    assert_eq!(
+        exec.to_string(),
+        "run /usr/bin/git with \"-C\" \"{path}\" \"status\" and read its output, even while you type and without an action you chose"
+    );
+}
+
+#[test]
+fn a_named_path_stays_where_it_says() {
+    for bad in [
+        "src",
+        "~src",
+        "~/",
+        "/",
+        "~/src/",
+        "~/a//b",
+        "~/../etc",
+        "/usr/./bin",
+        "/usr/bin/\u{202e}tig",
+        "/a\nb",
+    ] {
+        assert_eq!(
+            problem(json!({ "files": { "src": { "kind": "directory", "access": ["list"], "path": bad } } })),
+            ("invalid-value", "capabilities.files.src.path".into()),
+            "{bad:?}"
+        );
+    }
+    assert_eq!(
+        problem(json!({ "exec": { "git": { "program": "~/bin/git", "args": [] } } })),
+        ("invalid-value", "capabilities.exec.git.program".into()),
+        "a program is named from the root"
+    );
+    assert_eq!(
+        problem(json!({ "exec": { "git": { "program": 1, "args": [] } } })),
+        ("invalid-type", "capabilities.exec.git.program".into())
+    );
+    assert_eq!(
+        problem(json!({ "exec": { "git": { "background": "yes", "args": [] } } })),
+        ("invalid-type", "capabilities.exec.git.background".into())
+    );
 }

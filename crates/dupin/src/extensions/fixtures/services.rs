@@ -33,6 +33,9 @@ use super::super::Extension;
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 /// Under the scratch folder; the dot keeps it apart from every `files` scope's name.
 const STORAGE_DIR: &str = ".storage";
+/// The home folder a fixture's `files` scope declared under `~/` reports as its root, wherever
+/// the scratch folder holding it is.
+const FIXTURE_HOME: &str = "/Users/dupin";
 /// Bound to every executable profile; the fixture's exec service never runs it.
 const UNRUN_PROGRAM: &str = "/usr/bin/false";
 
@@ -104,6 +107,9 @@ impl Fixture {
             None,
             replier.services(),
         );
+        // Nothing exists here, so a declared folder the fixture leaves undecided is missing on
+        // every Mac alike.
+        bridge.set_home(Some(replier.scratch.path().join("home")));
         bridge.install(
             &extension.package,
             extension.revision.clone(),
@@ -281,8 +287,8 @@ impl Replier {
                 continue;
             }
             let binding = match &entry.scope {
-                Scope::Files { name, kind, .. } => Some(
-                    materialize(
+                Scope::Files { name, kind, path, .. } => {
+                    let binding = materialize(
                         scratch.path(),
                         name.as_str(),
                         *kind,
@@ -294,8 +300,14 @@ impl Replier {
                             format!("couldn't write the fixture's files: {error}"),
                         )
                         .file(name.as_str().to_owned())
-                    })?,
-                ),
+                    })?;
+                    let shown = match path {
+                        Some(path) => path.resolve(Path::new(FIXTURE_HOME)).display().to_string(),
+                        None => format!("/fixture/{name}"),
+                    };
+                    bridge.show_root_as(binding.clone(), shown);
+                    Some(binding)
+                }
                 scope if scope.needs_binding() => Some(PathBuf::from(UNRUN_PROGRAM)),
                 _ => None,
             };

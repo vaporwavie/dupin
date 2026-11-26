@@ -228,7 +228,9 @@ impl Extension {
     /// never cancels that, since the next keystroke needs the same catalogue. Every part of it
     /// must arrive before `deadline`, the search's own, so a slow catalogue fails with its own
     /// diagnostic before the search expires. For the main search, `role` holds off asking again
-    /// after a failure.
+    /// after a failure. With the `refresher` the launcher holds the package by, a catalogue that
+    /// has only outlived its `ttl` answers from the rows held while a thread of its own asks the
+    /// package again.
     pub fn catalogue(
         &self,
         query: &str,
@@ -236,6 +238,7 @@ impl Extension {
         deadline: Instant,
         call: &Call,
         role: Role,
+        refresher: Option<&Arc<Extension>>,
     ) -> Result<Vec<Batch>, RunError> {
         let settings = self.settings();
         let asking = Asking {
@@ -243,6 +246,11 @@ impl Extension {
             generation: call.generation,
             role,
         };
+        if let Some(refresher) = refresher
+            && self.catalogue.stale(asking) == Some(true)
+        {
+            refresher.refresh_in_background(settings.clone(), call);
+        }
         let never = || false;
         self.catalogue
             .search(
@@ -253,6 +261,33 @@ impl Extension {
                 self,
             )
             .map_err(|error| self.located(error))
+    }
+
+    /// Asks the package again for its stale catalogue on a thread of its own, through `call`'s
+    /// services and under its generation, as the search that found it stale would have.
+    fn refresh_in_background(self: &Arc<Self>, settings: Arc<Preferences>, call: &Call) {
+        let extension = Arc::clone(self);
+        let services = call.services.clone();
+        let generation = call.generation;
+        let spawned = std::thread::Builder::new()
+            .name(format!("catalogue-{}", self.id))
+            .spawn(move || {
+                let never = || false;
+                let deadline = Instant::now() + QUERY_DEADLINE;
+                extension.catalogue.refresh_stale(
+                    &settings,
+                    generation,
+                    &mut extension.fetch(host(), deadline, &never, &services),
+                    &*extension,
+                );
+            });
+        if let Err(error) = spawned {
+            crate::log::warn(&format!(
+                "extension {}: couldn't refresh its catalogue: {error}",
+                self.id
+            ));
+            self.catalogue.forget();
+        }
     }
 
     /// Asks `host` for the parts of the package's catalogue. Every part of one catalogue is

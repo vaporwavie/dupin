@@ -93,6 +93,7 @@ fn an_approval_covers_the_same_or_a_narrower_declaration_only() {
         name: name("notes"),
         kind,
         access: access.iter().copied().collect(),
+        path: None,
     };
     assert!(
         files(FilesKind::Directory, &[FilesAccess::Read, FilesAccess::List])
@@ -111,6 +112,8 @@ fn an_approval_covers_the_same_or_a_narrower_declaration_only() {
         name: name("git"),
         args: args.iter().map(|arg| arg.to_string()).collect(),
         output,
+        program: None,
+        background: false,
         ssh_agent,
     };
     assert!(exec(&["status"], true, false).covers(&exec(&["status"], false, false)));
@@ -225,7 +228,7 @@ fn context_scopes_need_no_macos_access_or_activation_and_describe_themselves() {
         "seeing the app never lets a package see the file"
     );
     for access in [ContextAccess::Frontmost, ContextAccess::Document] {
-        assert!(!Request::Context(access).needs_activation());
+        assert!(!Request::Context(access).needs_activation(&scope(access)));
     }
 }
 
@@ -236,6 +239,8 @@ fn exec_consent_shows_where_each_argument_starts_and_ends() {
             name: ScopeName::new("run").unwrap(),
             args: args.iter().map(|arg| (*arg).to_owned()).collect(),
             output: false,
+            program: None,
+            background: false,
             ssh_agent: false,
         }
         .to_string()
@@ -249,6 +254,8 @@ fn exec_consent_shows_where_each_argument_starts_and_ends() {
         name: ScopeName::new("ssh").unwrap(),
         args: vec!["{host}".into()],
         output: true,
+        program: None,
+        background: false,
         ssh_agent: true,
     };
     assert_eq!(
