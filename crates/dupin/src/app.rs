@@ -145,6 +145,14 @@ pub(crate) fn run() {
         let panel = handle.clone();
         move |update| panel.update(move |s, tx| s.reload_config(update, tx))
     }));
+    settings::overlay::on_synced({
+        let settings = Arc::downgrade(&settings);
+        move || {
+            if let Some(settings) = settings.upgrade() {
+                settings.reread();
+            }
+        }
+    });
     let updater = update::Updater::start(config.auto_update, handle.clone(), prefs_handle.clone());
     let current_config = Rc::new(RefCell::new(config.clone()));
     let welcome = prefs::welcome::first_run();
