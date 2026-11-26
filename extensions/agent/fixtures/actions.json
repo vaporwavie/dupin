@@ -1,6 +1,6 @@
 {
 	"fixture": 1,
-	"description": "An agent's project is revealed in Finder, opened in Terminal or its path copied; Show Process hands it to the Processes keyword, and Terminate signals it after Dupin's confirmation.",
+	"description": "Terminate signals an agent after Dupin's confirmation, once its PID still runs the agent.",
 	"environment": {
 		"now": "2026-11-26T12:00:00Z",
 		"seed": 1,
@@ -115,44 +115,6 @@
 			}
 		},
 		{
-			"activate": "Reveal Project in Finder",
-			"expect": {
-				"effect": {
-					"reveal": "/Users/alex/Projects/shop"
-				}
-			}
-		},
-		{
-			"activate": "Copy Path",
-			"expect": {
-				"effect": {
-					"copy": "/Users/alex/Projects/shop"
-				}
-			}
-		},
-		{
-			"activate": "Open Project in Terminal",
-			"expect": {
-				"effect": {
-					"run": {
-						"action": "terminal",
-						"data": {
-							"folder": "/Users/alex/Projects/shop"
-						}
-					}
-				},
-				"panel": "hide"
-			}
-		},
-		{
-			"activate": "Show Process",
-			"expect": {
-				"effect": {
-					"search": "proc 5120"
-				}
-			}
-		},
-		{
 			"activate": "Terminate",
 			"expect": {
 				"effect": {
@@ -167,6 +129,62 @@
 				},
 				"invalidated": true,
 				"toasts": ["Asked claude (5120) to quit"]
+			}
+		},
+		{
+			"query": "claude",
+			"expect": {
+				"rows": [
+					{
+						"accessories": [
+							{
+								"text": "3.1%"
+							},
+							{
+								"text": "176 MB"
+							}
+						],
+						"actions": [
+							{
+								"reveal": "/Users/alex/Projects/shop",
+								"title": "Reveal Project in Finder"
+							},
+							{
+								"run": {
+									"action": "terminal",
+									"data": {
+										"folder": "/Users/alex/Projects/shop"
+									}
+								},
+								"title": "Open Project in Terminal"
+							},
+							{
+								"copy": "/Users/alex/Projects/shop",
+								"title": "Copy Path"
+							},
+							{
+								"search": "proc 5120",
+								"title": "Show Process"
+							},
+							{
+								"run": {
+									"action": "terminate",
+									"data": {
+										"name": "claude",
+										"path": "claude",
+										"pid": 5120
+									}
+								},
+								"title": "Terminate"
+							}
+						],
+						"id": "5120",
+						"keywords": ["claude", "5120", "shop"],
+						"subtitle": "~/Projects/shop · 5120",
+						"title": "claude · shop"
+					}
+				],
+				"selected": 0
 			}
 		}
 	]

@@ -1,6 +1,6 @@
 {
 	"fixture": 1,
-	"description": "A TCP port opens in the browser on localhost and copies its address; Show Process hands it over to the Processes keyword; Terminate signals its process after Dupin's confirmation, once it still runs the program that listened.",
+	"description": "Terminate signals a port's process after Dupin's confirmation, once it still runs the program that listened, and says so when it has already ended.",
 	"environment": {
 		"now": "2026-11-26T12:00:00Z",
 		"seed": 1,
@@ -93,30 +93,6 @@
 			}
 		},
 		{
-			"activate": "Open in Browser",
-			"expect": {
-				"effect": {
-					"url": "http://localhost:5173"
-				}
-			}
-		},
-		{
-			"activate": "Copy Address",
-			"expect": {
-				"effect": {
-					"copy": "localhost:5173"
-				}
-			}
-		},
-		{
-			"activate": "Show Process",
-			"expect": {
-				"effect": {
-					"search": "proc 4242"
-				}
-			}
-		},
-		{
 			"activate": "Terminate",
 			"expect": {
 				"effect": {
@@ -192,6 +168,53 @@
 					}
 				},
 				"toasts": ["postgres (600) has already ended"]
+			}
+		},
+		{
+			"query": "5432",
+			"expect": {
+				"rows": [
+					{
+						"accessories": [
+							{
+								"tag": "TCP"
+							}
+						],
+						"actions": [
+							{
+								"title": "Open in Browser",
+								"url": "http://localhost:5432"
+							},
+							{
+								"copy": "localhost:5432",
+								"title": "Copy Address"
+							},
+							{
+								"copy": "5432",
+								"title": "Copy Port"
+							},
+							{
+								"search": "proc 600",
+								"title": "Show Process"
+							},
+							{
+								"run": {
+									"action": "terminate",
+									"data": {
+										"name": "postgres",
+										"pid": 600
+									}
+								},
+								"title": "Terminate"
+							}
+						],
+						"id": "TCP-5432-600",
+						"keywords": ["postgres", "600"],
+						"subtitle": "postgres · 600 · 127.0.0.1",
+						"title": "5432"
+					}
+				],
+				"selected": 0
 			}
 		}
 	]
