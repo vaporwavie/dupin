@@ -192,7 +192,7 @@
 								"tag": "2 changes"
 							},
 							{
-								"text": "checked 09:00"
+								"freshness": 1795683600000
 							}
 						],
 						"actions": [
@@ -274,7 +274,7 @@
 								"tag": "main ↓3"
 							},
 							{
-								"text": "checked 09:00"
+								"freshness": 1795683600000
 							}
 						],
 						"actions": [
@@ -402,7 +402,7 @@
 								"tag": "detached"
 							},
 							{
-								"text": "checked 09:00"
+								"freshness": 1795683600000
 							}
 						],
 						"actions": [
@@ -509,7 +509,7 @@
 								"tag": "main ↓3"
 							},
 							{
-								"text": "checked 09:00"
+								"freshness": 1795683600000
 							}
 						],
 						"actions": [
@@ -599,7 +599,7 @@
 								"tag": "main ↓3"
 							},
 							{
-								"text": "checked 09:00"
+								"freshness": 1795683600000
 							}
 						],
 						"actions": [
