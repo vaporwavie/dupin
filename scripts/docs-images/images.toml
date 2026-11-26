@@ -326,7 +326,14 @@ steps = [{ type = "ca" }, { key = "down" }, { key = "tab" }]
 [[clips]]
 page = "files"
 name = "clip"
-steps = [{ wait = 0.6 }, { key = "space" }, { wait = 0.6 }, { key = "backspace" }, { type = "in" }, { key = "space" }]
+steps = [
+	{ wait = 0.6 },
+	{ key = "space" },
+	{ wait = 0.6 },
+	{ key = "backspace" },
+	{ type = "in" },
+	{ key = "space" },
+]
 
 [[clips]]
 page = "recent-items"
@@ -336,17 +343,37 @@ steps = [{ wait = 1.2 }, { key = "down" }, { key = "down" }, { key = "down" }]
 [[clips]]
 page = "folder-browsing"
 name = "clip"
-steps = [{ wait = 1.2 }, { key = "tab" }, { key = "down" }, { type = "q" }, { key = "backspace" }, { key = "backspace" }]
+steps = [
+	{ wait = 1.2 },
+	{ key = "tab" },
+	{ key = "down" },
+	{ type = "q" },
+	{ key = "backspace" },
+	{ key = "backspace" },
+]
 
 [[clips]]
 page = "file-actions"
 name = "clip"
-steps = [{ wait = 1.2 }, { key = "down" }, { key = "down" }, { key = "k", cmd = true }, { key = "down" }]
+steps = [
+	{ wait = 1.2 },
+	{ key = "down" },
+	{ key = "down" },
+	{ key = "k", cmd = true },
+	{ key = "down" },
+]
 
 [[clips]]
 page = "send-to"
 name = "clip"
-steps = [{ wait = 1.2 }, { key = "down" }, { key = "down" }, { key = "k", cmd = true }, { type = "send" }, { key = "enter" }]
+steps = [
+	{ type = "maps" },
+	{ key = "k", cmd = true },
+	{ key = "down" },
+	{ key = "down" },
+	{ key = "down" },
+	{ key = "enter" },
+]
 
 [[clips]]
 page = "snapshots"
