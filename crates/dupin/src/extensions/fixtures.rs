@@ -72,10 +72,14 @@ pub struct Report {
     pub text: String,
 }
 
-/// The package in `folder` as the launcher would run it: a copy of a bundled package that is
-/// what this build shipped, byte for byte, as that bundled package, and any other as itself.
+/// The package in `folder` as the launcher runs it: one in the folder this Dupin's bundled
+/// extensions are in as that bundled package, so its fixtures replay what it may do that a
+/// third-party package may not, and any other as itself. It goes by where the folder is
+/// rather than by the seal, which every edit to a fixture would break until the next build.
 fn load_as_launched(folder: &Path) -> Result<Arc<Extension>, Diagnostic> {
-    if bundled::Seals::shipped().check(folder).is_none() {
+    let canonical = |path: &Path| path.canonicalize().ok();
+    let shipped = bundled::directory().as_deref().and_then(canonical);
+    if shipped.is_some() && canonical(folder).as_deref().and_then(Path::parent) == shipped.as_deref() {
         return super::load(folder, None, true).map(|loaded| loaded.extension);
     }
     load_folder(folder)
