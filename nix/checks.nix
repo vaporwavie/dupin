@@ -93,6 +93,10 @@ in
               touch $out
             '';
         renovate = repoCheck "dupin-renovate" [ ] "nu scripts/tests/renovate.nu";
+        docs-images = repoCheck "dupin-docs-images" [ ] ''
+          nu scripts/tests/docs-images.nu
+          nu scripts/docs-images.nu check
+        '';
         # Every crate the app links under a licence on deny.toml's allow-list, and
         # packaging/third-party.toml listing every other third-party file it ships. The notices
         # themselves are built from both, so they can't fall behind either.
