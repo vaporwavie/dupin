@@ -222,7 +222,7 @@ fn context_scopes_need_no_macos_access_or_activation_and_describe_themselves() {
         "seeing the app never lets a package see the file"
     );
     for access in [ContextAccess::Frontmost, ContextAccess::Document] {
-        assert!(!Request::Context(access).needs_activation());
+        assert!(!Request::Context(access).needs_activation(&scope(access)));
     }
 }
 
