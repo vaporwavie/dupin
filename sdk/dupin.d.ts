@@ -164,13 +164,6 @@ declare module 'dupin' {
 		| { title: string; open: string }
 		/** Shows the file at the absolute path selected in Finder; it opens nothing. */
 		| { title: string; reveal: string }
-		/**
-		 * Types one line of up to 512 bytes into the main search in place of what the panel shows,
-		 * so a keyword at its start opens that keyword's search with the rest as its query. A
-		 * package may search its own keyword; only one bundled with Dupin may name another's,
-		 * and Dupin leaves out any other.
-		 */
-		| { title: string; search: string }
 		| PushAction
 		| ItemAction;
 

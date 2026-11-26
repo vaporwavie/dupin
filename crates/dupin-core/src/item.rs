@@ -71,9 +71,6 @@ pub enum Action {
     /// Type the keyword and Space in the main search, as a row the keyword reaches offers;
     /// an empty keyword is Space on an empty query.
     Keyword(String),
-    /// Type the text into the main search in place of what the panel shows, so a keyword at
-    /// its start opens that keyword's search with the rest as its query.
-    Search(String),
     ScriptArguments(PathBuf),
     RunScript(crate::script::ScriptRun),
     /// Run the script config.toml names, by its file name in the scripts folder, with the

@@ -15,7 +15,7 @@ use dupin_js_runtime::row::{Row, RowAction, RowEffect};
 use dupin_js_runtime::{Diagnostic, PageContext, Preferences, RunError, ViewAnswer};
 use serde_json::{Map, Value, json};
 
-use super::super::provider::{DETAIL_ROW, form_of, offers, row_item};
+use super::super::provider::{DETAIL_ROW, form_of, row_item};
 use super::super::{ACTION_DEADLINE, Extension, QUERY_DEADLINE, Role};
 use super::{Held, Press, Replay, StepResult, fixture_host, guest_environment, query_rows, record, services};
 
@@ -498,7 +498,6 @@ impl Replayer<'_> {
             let shown = row_item(self.extension, row.clone(), false);
             row.actions
                 .iter()
-                .filter(|action| offers(self.extension, action))
                 .zip(&shown.item.actions)
                 .enumerate()
                 .find(|(_, (action, item))| action.title == name || item.id == name)
@@ -550,10 +549,7 @@ impl Replayer<'_> {
                 done.presses = choose(index, &action);
                 done.problem = self.run(handler, data.as_ref().unwrap_or(&Value::Null), outcome, false);
             }
-            RowEffect::Copy { .. }
-            | RowEffect::OpenUrl { .. }
-            | RowEffect::Reveal { .. }
-            | RowEffect::Search { .. } => {}
+            RowEffect::Copy { .. } | RowEffect::OpenUrl { .. } | RowEffect::Reveal { .. } => {}
         }
         done
     }
