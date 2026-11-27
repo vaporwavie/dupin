@@ -72,7 +72,17 @@ static WORKER: LazyLock<mpsc::Sender<Job>> = LazyLock::new(|| {
                 } else if !dupin_mac::symbol::exists(&job.name) {
                     let mut kept = KEPT.lock().unwrap_or_else(PoisonError::into_inner);
                     if kept.missing.len() >= MAX_KEPT {
-                        kept.missing.clear();
+                        // Their kept drawings are clear squares: let them go too, so a frame
+                        // asking again finds the name missing anew rather than drawing a gap.
+                        let Kept {
+                            symbols,
+                            count,
+                            missing,
+                            ..
+                        } = &mut *kept;
+                        for name in missing.drain() {
+                            *count -= symbols.remove(&name).map_or(0, |drawings| drawings.len());
+                        }
                     }
                     kept.missing.insert(job.name);
                     drop(kept);
