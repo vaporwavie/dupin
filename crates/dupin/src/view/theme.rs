@@ -54,7 +54,8 @@ impl ResolvedTheme {
     }
     /// What stands before the query field while no command's chip does, in a slot as wide as a
     /// symbol's square so the field starts at the same place whatever the icon. Text is centred
-    /// in it and may widen it rather than be cut.
+    /// in it and may widen it rather than be cut. A symbol the system lacks falls back to the
+    /// default icon.
     pub fn search_icon(&self) -> El {
         let size = crate::symbols::Size {
             square: crate::symbols::FIELD.square * self.scale,
@@ -62,11 +63,15 @@ impl ResolvedTheme {
         };
         let glyph = match &self.search_icon {
             dupin_core::config::SearchIcon::Symbol(name) => {
-                let pixels = crate::symbols::symbol(name, size, self.text_secondary);
-                return el()
-                    .key("search-icon")
-                    .size(size.square, size.square)
-                    .pixels(&pixels);
+                match crate::symbols::symbol(name, size, self.text_secondary) {
+                    Some(pixels) => {
+                        return el()
+                            .key("search-icon")
+                            .size(size.square, size.square)
+                            .pixels(&pixels);
+                    }
+                    None => dupin_core::config::DEFAULT_SEARCH_ICON,
+                }
             }
             dupin_core::config::SearchIcon::Text(glyph) => glyph,
         };

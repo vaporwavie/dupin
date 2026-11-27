@@ -95,12 +95,15 @@ pub enum SearchIcon {
     Text(String),
 }
 
+/// The search icon a theme without one shows, and one whose symbol the system lacks.
+pub const DEFAULT_SEARCH_ICON: &str = "⌕";
+
 /// The most characters a text search icon holds: room for a joined emoji, not for a word.
 const MAX_SEARCH_ICON_TEXT: usize = 8;
 
 impl Default for SearchIcon {
     fn default() -> Self {
-        SearchIcon::Text("⌕".into())
+        SearchIcon::Text(DEFAULT_SEARCH_ICON.into())
     }
 }
 

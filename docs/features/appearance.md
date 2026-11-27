@@ -95,7 +95,7 @@ Themes are built in: share the `[theme]` section without installing an extension
 
 `font_family` takes any font installed on the Mac by the name Font Book shows — `"Menlo"`, `"JetBrains Mono"`, `"Hiragino Sans"`. A comma-separated list tries each in order, CSS-style: `"Iosevka, JetBrains Mono"`. A name nothing provides falls back to the system font. Settings → Appearance lists the installed families in the Font menu; a name only TOML can express stays there, checked.
 
-`search_icon` is what stands before the query field until a command's chip takes its place. Text draws in the theme's font, so a glyph or an emoji works; `"sf:sparkle"` draws that SF Symbol in the secondary text colour, and a name the system has no symbol for draws nothing.
+`search_icon` is what stands before the query field until a command's chip takes its place. Text draws in the theme's font, so a glyph or an emoji works; `"sf:sparkle"` draws that SF Symbol in the secondary text colour, and a name the system has no symbol for shows the default `"⌕"`.
 
 The background remains a tint over Liquid Glass; headless rendering uses its opaque fallback.
 
