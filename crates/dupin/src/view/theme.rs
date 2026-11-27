@@ -52,24 +52,29 @@ impl ResolvedTheme {
             search_icon: theme.search_icon.clone(),
         }
     }
-    /// What stands before the query field while no command's chip does.
+    /// What stands before the query field while no command's chip does, in a slot as wide as a
+    /// symbol's square so the field starts at the same place whatever the icon. Text is centred
+    /// in it and may widen it rather than be cut.
     pub fn search_icon(&self) -> El {
-        let name = match &self.search_icon {
-            dupin_core::config::SearchIcon::Text(glyph) => {
-                return text(glyph)
-                    .font(self.font(TextStyle::new(24.0, 400.0).lh(30.0)))
-                    .color(self.text_secondary);
-            }
-            dupin_core::config::SearchIcon::Symbol(name) => name,
-        };
         let size = crate::symbols::Size {
             square: crate::symbols::FIELD.square * self.scale,
             glyph: crate::symbols::FIELD.glyph * self.scale,
         };
-        let pixels = crate::symbols::symbol(name, size, self.text_secondary);
-        el().key("search-icon")
-            .size(size.square, size.square)
-            .pixels(&pixels)
+        let glyph = match &self.search_icon {
+            dupin_core::config::SearchIcon::Symbol(name) => {
+                let pixels = crate::symbols::symbol(name, size, self.text_secondary);
+                return el()
+                    .key("search-icon")
+                    .size(size.square, size.square)
+                    .pixels(&pixels);
+            }
+            dupin_core::config::SearchIcon::Text(glyph) => glyph,
+        };
+        row().key("search-icon").min_w(size.square).center().child(
+            text(glyph)
+                .font(self.font(TextStyle::new(24.0, 400.0).lh(30.0)))
+                .color(self.text_secondary),
+        )
     }
     pub fn font(&self, mut style: TextStyle) -> TextStyle {
         style.size *= self.scale;
