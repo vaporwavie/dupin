@@ -10,7 +10,8 @@
 //! process that must forget a package's grants asks the app to. Until the local grants are read
 //! nothing is granted. It never prompts. A request that needs consent fails with
 //! `needs-consent` and is kept as a [`ConsentRequest`] for the panel and Settings to show;
-//! granting it runs nothing again.
+//! granting it runs nothing again. A request ends with its call: one still running when the call
+//! ends asks nothing more, and what it asked is withdrawn unless the guest took the refusal.
 
 mod call;
 pub mod services;
@@ -26,9 +27,10 @@ use std::time::{Instant, SystemTime};
 pub use dupin_broker::{
     Base, Broker, BrokerError, Capabilities, ClipboardAccess, ConsentReason, ConsentState, Denial, FilesKind,
     Generation, GrantSource, Local, LocalStore, MemoryLocal, OsAccess, OsConsumer, OsPermission, PackageId,
-    Permit, Reconciliation, Request, Revision, SaveError, Scope, ScopeKey, StoreError, Trigger,
+    Permit, Reconciliation, Request, Revision, SaveError, Scope, ScopeKey, StorageOp, StoreError, Trigger,
     WindowsAccess,
 };
+pub use dupin_extension_host::HostRequest;
 use dupin_extension_host::Services as HostServices;
 use dupin_host_services::files;
 pub use services::{Failure, Services};
@@ -59,9 +61,10 @@ impl ConsentRequest {
         self.scope.key()
     }
 
-    /// Whether granting needs a file, folder or program the user picks first.
-    pub fn needs_binding(&self) -> bool {
-        self.scope.needs_binding()
+    /// Whether granting needs a file, folder or program the user picks first, since the
+    /// package names none.
+    pub fn needs_pick(&self) -> bool {
+        self.scope.needs_pick()
     }
 }
 
@@ -94,7 +97,8 @@ pub struct ScopeEntry {
 /// What changed, so the app can refresh what it shows. Never a prompt.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Notice {
-    /// A call was refused for want of consent; [`Bridge::pending`] lists it.
+    /// A call was refused for want of consent, or a refusal its call ended without seeing was
+    /// withdrawn; [`Bridge::pending`] lists what is still asked.
     ConsentNeeded(PackageId),
     /// Grants, enablement or the generation of the package changed.
     Changed(PackageId),
@@ -139,8 +143,19 @@ impl HostServices for Session {
             .contains(url)
     }
 
-    fn call(&self, op: &str, args: &[u8], deadline: Instant, cancelled: &AtomicBool) -> Vec<u8> {
-        let reply = match self.dispatch(op, args, deadline, cancelled) {
+    fn call(
+        &self,
+        request: HostRequest,
+        op: &str,
+        args: &[u8],
+        deadline: Instant,
+        cancelled: &AtomicBool,
+    ) -> Vec<u8> {
+        let asker = Asker {
+            request: Some(request),
+            ended: cancelled,
+        };
+        let reply = match self.dispatch(op, args, deadline, asker) {
             Ok(value) => serde_json::json!({ "ok": value }),
             Err(failure) => serde_json::json!({ "error": failure }),
         };
@@ -154,6 +169,43 @@ impl HostServices for Session {
         );
         serde_json::json!({ "error": failure }).to_string().into_bytes()
     }
+
+    fn ended(&self, run: u64, answered: &[u32]) {
+        self.bridge.end_run(run, answered);
+    }
+}
+
+/// Who a decision is made for: a guest's host request, with whether its run has ended, or
+/// Dupin itself.
+#[derive(Clone, Copy)]
+pub(crate) struct Asker<'a> {
+    request: Option<HostRequest>,
+    ended: &'a AtomicBool,
+}
+
+impl Asker<'static> {
+    fn dupin() -> Self {
+        static NEVER: AtomicBool = AtomicBool::new(false);
+        Self {
+            request: None,
+            ended: &NEVER,
+        }
+    }
+}
+
+/// What the bridge asks the user about a package.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum Ask {
+    Consent(ScopeKey),
+    TurnOn,
+}
+
+/// What keeps a question up while a host request that asked it may still end unseen: those
+/// requests, and whether something that has finished asking keeps it up regardless.
+#[derive(Default)]
+struct Askers {
+    settled: bool,
+    running: Vec<HostRequest>,
 }
 
 /// Host services for one call, and the generation it started at: a result the call produces
@@ -189,6 +241,10 @@ struct Inner {
     /// and only [`Bridge::open_grants`] holds the store's lock for longer than a write.
     read: AtomicBool,
     files: Mutex<HashMap<PackageId, FilesTable>>,
+    /// What `files.root` reports for a binding instead of the binding itself.
+    shown_roots: Mutex<HashMap<PathBuf, String>>,
+    /// The folder a path a package declares under `~/` is in.
+    home: Mutex<Option<PathBuf>>,
     watches: watch::Watches,
     /// The image of each package's latest clipboard change, which its handler may store
     /// without the bytes crossing to the guest.
@@ -204,6 +260,8 @@ struct State {
     /// Packages whose request failed because they are off, so the panel can offer to turn
     /// them on.
     asked_while_off: HashSet<PackageId>,
+    /// The questions above that a host request asked before its run ended.
+    askers: HashMap<(PackageId, Ask), Askers>,
     /// What the host last reported for each OS permission.
     os: HashMap<OsPermission, OsAccess>,
     /// Problems reading or saving grants, for Settings.
@@ -256,6 +314,7 @@ impl Bridge {
                     broker,
                     pending: Vec::new(),
                     asked_while_off: HashSet::new(),
+                    askers: HashMap::new(),
                     os: HashMap::new(),
                     problems: Vec::new(),
                     seen,
@@ -266,6 +325,8 @@ impl Bridge {
                 local: Mutex::new(local),
                 read: AtomicBool::new(read),
                 files: Mutex::default(),
+                shown_roots: Mutex::default(),
+                home: Mutex::new(std::env::home_dir()),
                 watches: watch::Watches::default(),
                 clips: Mutex::default(),
                 listener: Mutex::default(),
@@ -416,7 +477,7 @@ impl Bridge {
         let session = self
             .session(id, trigger)
             .ok_or_else(|| failure_for(&Denial::NotInstalled))?;
-        session.permit(request)
+        session.permit(request, Asker::dupin())
     }
 
     /// Hands `read` the image a row of `id` names, resolved in `id`'s own storage namespace
@@ -472,9 +533,30 @@ impl Bridge {
         self.inner.lock().asked_while_off.contains(id)
     }
 
+    /// Has `files.root` report `shown` for a scope bound to `binding`, so a fixture whose
+    /// scopes live in a scratch folder answers with the same path on every run.
+    pub fn show_root_as(&self, binding: PathBuf, shown: String) {
+        self.inner
+            .shown_roots
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(binding, shown);
+    }
+
+    /// Resolves the paths packages declare under `~/` in `home` instead of the user's home
+    /// folder, as a fixture does in its scratch folder.
+    pub fn set_home(&self, home: Option<PathBuf>) {
+        *self
+            .inner
+            .home
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = home;
+    }
+
     /// Grants `scope` exactly as the user saw it for `revision`, with the path they picked
-    /// for a files or exec scope. Turning the scope on also turns the package on, since the
-    /// user chose to let it act. Nothing that failed for want of it runs again.
+    /// for a files or exec scope, or without one, the path the package declares for it.
+    /// Turning the scope on also turns the package on, since the user chose to let it act.
+    /// Nothing that failed for want of it runs again.
     pub fn allow(
         &self,
         id: &PackageId,
@@ -483,6 +565,7 @@ impl Bridge {
         binding: Option<PathBuf>,
     ) -> Result<(), SaveError> {
         let key = scope.key();
+        let binding = binding.or_else(|| Some(scope.declared_path()?.resolve(self.inner.home().as_deref()?)));
         self.change(id, |broker| {
             broker.consent(id, revision, scope, binding)?;
             if !broker.is_enabled(id) {
@@ -674,6 +757,13 @@ impl Bridge {
 }
 
 impl Inner {
+    fn home(&self) -> Option<PathBuf> {
+        self.home
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
     fn lock(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
@@ -805,6 +895,7 @@ impl Inner {
         state: &mut State,
         id: &PackageId,
         needed: dupin_broker::ConsentNeeded,
+        by: Option<HostRequest>,
     ) -> Failure {
         let request = ConsentRequest {
             package: id.clone(),
@@ -836,12 +927,82 @@ impl Inner {
         .scope(key.to_string());
         failure.description = Some(request.description.clone());
         failure.permission = request.permission.map(|permission| permission.name().into());
+        let before = state.pending.len();
         state
             .pending
             .retain(|pending| pending.package != *id || pending.key() != key);
+        let up = state.pending.len() < before;
         state.pending.insert(0, request);
         state.pending.truncate(MAX_PENDING);
+        state.asked(id, Ask::Consent(key), up, by);
         failure
+    }
+
+    /// Withdraws what the requests of run `run` asked, other than those in `answered`, whose
+    /// refusals the guest took, unless something else keeps it up.
+    fn end_run(&self, run: u64, answered: &[u32]) {
+        let mut withdrawn = Vec::new();
+        {
+            let mut state = self.lock();
+            state.askers.retain(|question, askers| {
+                askers.running.retain(|request| {
+                    if request.run != run {
+                        return true;
+                    }
+                    askers.settled |= answered.contains(&request.call);
+                    false
+                });
+                if !askers.running.is_empty() {
+                    return true;
+                }
+                if !askers.settled {
+                    withdrawn.push(question.clone());
+                }
+                false
+            });
+            for (id, ask) in &withdrawn {
+                match ask {
+                    Ask::Consent(key) => state
+                        .pending
+                        .retain(|pending| pending.package != *id || pending.key() != *key),
+                    Ask::TurnOn => {
+                        state.asked_while_off.remove(id);
+                    }
+                }
+            }
+        }
+        let mut packages: Vec<_> = withdrawn.into_iter().map(|(id, _)| id).collect();
+        packages.sort();
+        packages.dedup();
+        for id in packages {
+            self.notify(Notice::ConsentNeeded(id));
+        }
+    }
+}
+
+impl State {
+    /// Notes who asked `ask` of `id`, which was already `up` or not: a host request's question
+    /// stands only once the guest took the refusal, Dupin's own at once.
+    fn asked(&mut self, id: &PackageId, ask: Ask, up: bool, by: Option<HostRequest>) {
+        let question = (id.clone(), ask);
+        match (by, self.askers.get_mut(&question)) {
+            (None, Some(askers)) => askers.settled = true,
+            (None, None) => {}
+            (Some(request), Some(askers)) => {
+                // A question answered since doesn't keep this one up.
+                askers.settled &= up;
+                askers.running.push(request);
+            }
+            (Some(request), None) => {
+                self.askers.insert(
+                    question,
+                    Askers {
+                        settled: up,
+                        running: vec![request],
+                    },
+                );
+            }
+        }
     }
 }
 

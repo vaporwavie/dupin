@@ -10,6 +10,7 @@
 ## About
 
 - [Philosophy](./philosophy.md): why Dupin exists: built for searching, a launcher and nothing more, fast by rule, extensions agents can write
+- [FAQ](./faq.md): short answers on installing, privacy, extensions and how Dupin compares
 - [The name](./name.md): why Dupin, and the Mac launchers it descends from
 
 ## Built-in features
@@ -44,16 +45,25 @@ Shipped with Dupin as extensions, each one yours to eject and change.
 - [Clipboard history](./features/clipboard.md)
 - [Dictionary](./features/dictionary.md)
 - [Emoji & Symbols](./features/emoji.md)
+- [Repositories](./features/repo.md)
 - [Snippets](./features/snippets.md)
 - [Web searches](./features/web-searches.md)
 - [Maps](./features/maps.md)
 - [Window management](./features/window-management.md)
+- [Processes](./features/processes.md)
+- [Ports](./features/ports.md)
+- [Coding agents](./features/coding-agents.md)
 
 ## Your own extensions
 
 Write, install and test extensions of your own.
 
 - [Extensions](./features/extensions.md): writing and installing JavaScript extensions, and their limits
+
+## Scripts and agents
+
+Drive Dupin from a terminal, a script or an AI agent.
+
 - [Command line](./features/cli.md): `dupin open`, `pick`, `config`, `ext` and headless renders
 - [MCP server](./features/mcp.md): `dupin mcp`, for agents such as Claude Code
 

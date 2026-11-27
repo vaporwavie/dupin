@@ -517,7 +517,8 @@ fn execute(action: Action, json: bool) -> Result<Value, Failure> {
             Ok(Value::Null)
         }
         Action::ExtRun(folder, query) => {
-            let extension = crate::extensions::load_folder(std::path::Path::new(&folder))?;
+            let extension =
+                std::sync::Arc::new(crate::extensions::load_folder(std::path::Path::new(&folder))?);
             let batches = crate::extensions::answer(
                 &extension,
                 &query,

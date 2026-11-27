@@ -572,14 +572,34 @@ declare module 'dupin' {
 	export interface Capabilities {
 		/** Up to 32 `https://host[:port]` origins, lowercase, without a path or `:443`. */
 		http?: { origin: `https://${string}`; methods: HttpMethod[] }[];
-		/** Up to 16 named scopes; the user picks the file or folder each one is. */
-		files?: Record<string, { kind: 'file' | 'directory'; access: ('read' | 'list')[] }>;
+		/**
+		 * Up to 16 named scopes. `path`, absolute or under `~/`, names the file or folder the
+		 * scope is; without it the user picks one.
+		 */
+		files?: Record<
+			string,
+			{ kind: 'file' | 'directory'; access: ('read' | 'list')[]; path?: string }
+		>;
 		/**
 		 * Up to 16 named profiles: an argument template whose `{input}` placeholders take one line
-		 * of text each, run with a program the user picks; or `@script:<name>` for one of the
-		 * user's script commands. `output` asks to receive stdout and stderr.
+		 * of text each, run with the program at the absolute path `program` names, or one the user
+		 * picks; or `@script:<name>` for one of the user's script commands. `output` asks to
+		 * receive stdout and stderr; `sshAgent` hands a picked program `SSH_AUTH_SOCK`, so `ssh`
+		 * can use the user's agent; `background` lets the profile run while the user types, in
+		 * `items` and in event handlers, rather than only in an action; `outputBytes`, with
+		 * `output`, is the most of each stream it receives, 64 KiB unless declared and 1 MiB at most.
 		 */
-		exec?: Record<string, { args?: string[]; output?: boolean }>;
+		exec?: Record<
+			string,
+			{
+				args?: string[];
+				output?: boolean;
+				program?: string;
+				background?: boolean;
+				sshAgent?: boolean;
+				outputBytes?: number;
+			}
+		>;
 		/**
 		 * Encrypted records private to the package: 1 byte to 64 MiB, kept 1–3,650 days or until
 		 * deleted. `sync` asks for `storage:sync`: once the user grants it on a Mac, a package installed
@@ -685,6 +705,8 @@ declare module 'dupin' {
 		readText(scope: string, path: string, options?: { limit?: number }): Promise<string>;
 		/** At most `limit` entries, 200 by default and 1,000 at most. */
 		list(scope: string, path?: string, options?: { limit?: number }): Promise<FileEntry[]>;
+		/** The absolute path of the file or folder the scope is, for Dupin's actions and programs. */
+		root(scope: string): Promise<string>;
 	};
 
 	export interface ExecResult {
@@ -698,7 +720,10 @@ declare module 'dupin' {
 		readonly truncated?: boolean;
 	}
 
-	/** `exec` capability, only in an action. `profile` is a key of `exec`, such as `@script:open-in-zed`. */
+	/**
+	 * `exec` capability, only in an action unless the profile declares `background`. `profile` is
+	 * a key of `exec`, such as `@script:open-in-zed`.
+	 */
 	export const exec: {
 		run(profile: string, inputs?: Record<string, string | number>): Promise<ExecResult>;
 	};

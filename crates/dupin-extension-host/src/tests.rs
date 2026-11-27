@@ -558,6 +558,37 @@ fn catalogues_and_action_handlers_run_in_the_helper() {
     );
 }
 
+#[test]
+fn a_catalogue_asked_for_alone_never_waits_for_a_running_search() {
+    skip_inside_a_sandbox!();
+    let host = Arc::new(host());
+    let source = r#"export function search() { for (;;) {} }
+                    export function items(ctx) { return [{ id: 'a', title: ctx.reason }]; }"#;
+    let busy = compile(&host, &[(DEFAULT_ENTRY, source)]).unwrap();
+    let running = {
+        let (host, busy) = (host.clone(), busy.clone());
+        std::thread::spawn(move || search(&host, &busy, "", Duration::from_secs(3)))
+    };
+    std::thread::sleep(Duration::from_millis(200));
+    let page = host
+        .items_alone(
+            &busy,
+            None,
+            Reason::Expired,
+            &crate::Preferences::encode(&serde_json::json!({})),
+            Instant::now() + Duration::from_secs(1),
+            &|| false,
+            &none(),
+        )
+        .expect("answered beside the running search");
+    assert!(!running.is_finished(), "the search was still running");
+    let PageChange::Reset { rows } = page.change else {
+        panic!("{:?}", page.change);
+    };
+    assert_eq!(rows[0].title, "expired");
+    assert_eq!(failed(running.join().unwrap()).code, "deadline");
+}
+
 const ROGUE_ENV: &str = "DUPIN_EXTENSION_HOST_ROGUE";
 
 /// Not a test: a compromised helper. It answers each call, then forges an answer to the next
@@ -606,12 +637,14 @@ fn rogue_helper_entry() {
         let answer = FromHelper::Done {
             id,
             answer: rows("genuine"),
+            answered: Vec::new(),
         };
         wire::write(&mut socket, &answer, &[]).unwrap();
         for forged in id + 1.. {
             let forged = FromHelper::Done {
                 id: forged,
                 answer: rows("forged"),
+                answered: Vec::new(),
             };
             if wire::write(&mut socket, &forged, &[]).is_err() {
                 std::process::exit(0);
@@ -685,7 +718,16 @@ fn implant_helper_entry() {
             }
         }
         let answer = Answer::Rows { items: Vec::new() };
-        wire::write(&mut socket, &FromHelper::Done { id, answer }, &[]).unwrap();
+        wire::write(
+            &mut socket,
+            &FromHelper::Done {
+                id,
+                answer,
+                answered: Vec::new(),
+            },
+            &[],
+        )
+        .unwrap();
     }
     std::process::exit(0);
 }
@@ -695,7 +737,14 @@ fn implant_helper_entry() {
 struct Recorded(std::sync::Mutex<Vec<String>>);
 
 impl Services for Recorded {
-    fn call(&self, op: &str, _args: &[u8], _deadline: Instant, _cancelled: &AtomicBool) -> Vec<u8> {
+    fn call(
+        &self,
+        _request: HostRequest,
+        op: &str,
+        _args: &[u8],
+        _deadline: Instant,
+        _cancelled: &AtomicBool,
+    ) -> Vec<u8> {
         self.0.lock().unwrap().push(op.into());
         br#"{"ok":null}"#.to_vec()
     }
@@ -1156,7 +1205,16 @@ fn forgetful_helper_entry() {
                 }],
             },
         };
-        wire::write(&mut socket, &FromHelper::Done { id, answer }, &[]).unwrap();
+        wire::write(
+            &mut socket,
+            &FromHelper::Done {
+                id,
+                answer,
+                answered: Vec::new(),
+            },
+            &[],
+        )
+        .unwrap();
     }
     std::process::exit(0);
 }

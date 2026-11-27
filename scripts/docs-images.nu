@@ -2,7 +2,8 @@
 
 use headless-config.nu [scenario-env panel-height headless]
 
-const MANIFEST = path self docs-images/images.toml
+export const MANIFEST = path self docs-images/images.toml
+export const GLASS = path self ../docs/images/glass.json
 const THEMES = [light dark]
 # Pages draw at twice their size, so `width` in the Markdown is half the PNG's.
 const SCALE = 2
@@ -10,11 +11,15 @@ const SCALE = 2
 # that differ, so these keep a busy one, such as scrolling emoji, near 250 KB, and text stays
 # readable on a Retina screen.
 const CLIP_SCALE = 1.25
-const CLIP_FPS = 10
+export const CLIP_FPS = 10
 # Clips render this many points tall, more than the panel ever is, and are cut to it.
 const CLIP_HEIGHT = 720
 # Room below the panel for the captions, so they never cover a row.
-const CAPTION_SPACE = 60
+export const CAPTION_SPACE = 60
+# How tall the website's home demo frame is, in points, for a width of 680. A home clip is at
+# least this tall, so a backdrop shader, which draws only inside the panel, never leaves the
+# frame short of it.
+const HOME_FRAME_HEIGHT = 578
 # How a clip's steps are paced, in seconds.
 const CLIP_START = 0.6
 const CLIP_TYPING = 0.12
@@ -103,7 +108,7 @@ def "main check" []: nothing -> nothing {
             {path: ($doc | path relative-to $root), text: (open --raw $doc)}
         })
         {|path| $path | path exists }
-    )
+    ) | append (glass-problems (open $MANIFEST) (captured-glass))
     if ($problems | is-not-empty) {
         error make {
             msg: ($problems | str join "\n")
@@ -116,12 +121,27 @@ def kind-extensions [kind: string]: nothing -> list<string> {
     if $kind == images { [png] } else { [webp mp4] }
 }
 
+# The `glass = true` clips scripts/docs-glass.nu has recorded from the real app, by id, with how.
+export def captured-glass []: nothing -> record {
+    if ($GLASS | path exists) {
+        open $GLASS | get clips
+    } else {
+        {}
+    }
+}
+
+# Everything wrong with docs/images/glass.json: each clip it lists must be a `glass = true` clip.
+export def glass-problems [manifest: record, captured: record]: nothing -> list<string> {
+    let glass = manifest-entries $manifest [clips] | where {|clip| $clip.glass? | default false } | each {|clip| image-id $clip }
+    $captured | columns | where {|id| $id not-in $glass } | each {|id| $"($GLASS | path basename) lists ($id), which is not a `glass = true` clip" }
+}
+
 export def image-id [image: record]: nothing -> string {
     $"($image.page)/($image.name)"
 }
 
 # The manifest's entries of `kinds`, each clip marked as one.
-def manifest-entries [manifest: record, kinds: list<string>]: nothing -> list<record> {
+export def manifest-entries [manifest: record, kinds: list<string>]: nothing -> list<record> {
     $kinds | each {|kind|
         $manifest | get --optional $kind | default [] | each {|entry|
             if $kind == clips { $entry | upsert clip true } else { $entry }
@@ -336,6 +356,10 @@ def render-clip [
     bin: path
     tmp: path
 ]: nothing -> list<string> {
+    if (image-id $clip) in (captured-glass) {
+        print --stderr $"  kept its Liquid Glass recording; `just docs-glass` records it again"
+        return (image-paths $clip)
+    }
     let name = image-id $clip | str replace --all / -
     let timeline = clip-timeline $clip.steps
     let script = $tmp | path join $"($name)-script.json"
@@ -362,7 +386,8 @@ def render-clip [
         let video = if ($clip.video? | default false) {
             {poster: (poster-path $clip $theme), background: ($clip.background? | default "#000000")}
         }
-        finish-clip $pngs $captions $out ($tmp | path join $"($name)-captions") $scale $video
+        let min_height = if $clip.page == home { $HOME_FRAME_HEIGHT * $scale | math round }
+        finish-clip $pngs $captions $out ($tmp | path join $"($name)-captions") $scale $video $min_height
         [$out] | append ($video | get --optional poster | default [])
     } | flatten
 }
@@ -378,6 +403,7 @@ def finish-clip [
     folder: path
     scale: number
     video?: record
+    min_height?: number
 ]: nothing -> nothing {
     let bottom = ^magick ...$pngs -background none -layers merge -format "%@" info: | parse "{w}x{h}+{x}+{y}" | first | ($in.h | into int) + ($in.y | into int)
     let width = ^magick identify -format "%w" ($pngs | first) | into int
@@ -387,7 +413,10 @@ def finish-clip [
         $CAPTION_SPACE * $scale | math round
     }
     # H.264 takes only even sides.
-    let height = ($bottom + $space + 1) // 2 * 2
+    let height = ([
+        ($bottom + $space + 1)
+        ($min_height | default 0)
+    ] | math max) // 2 * 2
     ^magick mogrify -gravity north -background none -crop $"($width)x($bottom)+0+0" +repage -extent $"($width)x($height)" ...$pngs
     if $captions != null {
         caption $pngs $captions $folder $scale
@@ -407,7 +436,7 @@ def finish-clip [
 # Encodes `pngs` over `video.background` as an H.264 MP4 at `out`, which every browser plays and
 # which takes a fraction of an animated WebP's bytes when a backdrop shader changes every pixel of
 # every frame, and saves the last frame as `video.poster`.
-def encode-video [pngs: list<string>, out: path, video: record]: nothing -> nothing {
+export def encode-video [pngs: list<string>, out: path, video: record]: nothing -> nothing {
     ^magick mogrify -background $video.background -flatten ...$pngs
     let frames = $pngs | first | path dirname | path join "frame_*.png"
     let result = (
@@ -490,7 +519,7 @@ export def script-captions [events: list<record>]: nothing -> list<record> {
 # Draws each caption on the frames it is shown in, as a pill centred at the bottom: from its
 # time until the next caption's, or `CLIP_HOLD` seconds, whichever is sooner. One style for both
 # themes, in Inter, which `DUPIN_CAPTION_FONT` names (the dev shell sets it).
-def caption [
+export def caption [
     frames: list<string>
     captions: list<record>
     folder: path
@@ -616,7 +645,7 @@ export def key-caption [step: record]: nothing -> string {
 #
 # Each runs in a home of its own, with its configuration in ~/.config/dupin, so the paths Settings
 # shows are the same on every Mac and in every run.
-def scratch-environment [
+export def scratch-environment [
     scenario: path
     image: record
     manifest: record
@@ -640,7 +669,10 @@ def scratch-environment [
     # `backdrop` picks an example shader as Settings does, from the `shaders` folder.
     cp --recursive examples/shaders ($config | path join dupin shaders)
     if $image.backdrop? != null {
-        $"\nbackdrop = ($image.backdrop | to json)\n" | save --append ($config | path join dupin config.toml)
+        # Parsed and written again, since a key appended to the text would land in its last table.
+        let file = $config | path join dupin config.toml
+        let settings = if ($file | path exists) { open $file } else { {} }
+        $settings | upsert backdrop $image.backdrop | to toml | save --force $file
     }
     let environment = {
         XDG_DATA_HOME: ($tmp | path join $"($name)-data")

@@ -9,8 +9,8 @@ use std::time::{Duration, Instant};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use dupin_broker::{
-    ClipboardAccess, ContextAccess, FilesAccess, FilesKind, Method, Permit, Request, Scope, ScopeKey,
-    ScopeName, StorageOp, WindowsAccess,
+    ClipboardAccess, ConsentState, ContextAccess, FilesAccess, FilesKind, Method, Permit, Request, Scope,
+    ScopeKey, ScopeName, StorageOp, WindowsAccess,
 };
 use dupin_extension_http as http;
 use dupin_host_services::{calendar, exec, files, windows};
@@ -18,9 +18,11 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::services::Failure;
-use crate::{Session, failure_for, storage};
+use crate::{Ask, Asker, Session, failure_for, storage};
 
 const MAX_URL_BYTES: usize = 8 * 1024;
+/// What a command's timeout leaves of its call's time, for the call to read its result.
+const EXEC_MARGIN: Duration = Duration::from_millis(250);
 const MAX_HEADERS: usize = 64;
 const MAX_HEADER_BYTES: usize = 8 * 1024;
 const MAX_BODY_BYTES: usize = 1024 * 1024;
@@ -87,6 +89,12 @@ struct FilesArgs {
     #[serde(default)]
     path: String,
     limit: Option<u64>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RootArgs {
+    scope: String,
 }
 
 #[derive(Deserialize)]
@@ -217,13 +225,14 @@ impl Session {
         op: &str,
         args: &[u8],
         deadline: Instant,
-        cancelled: &AtomicBool,
+        asker: Asker<'_>,
     ) -> Result<Value, Failure> {
         match op {
-            "http.fetch" => self.fetch(decode(args)?, deadline, cancelled),
-            "files.read" => self.files(decode(args)?, FilesAccess::Read),
-            "files.list" => self.files(decode(args)?, FilesAccess::List),
-            "exec.run" => self.exec(decode(args)?, cancelled),
+            "http.fetch" => self.fetch(decode(args)?, deadline, asker),
+            "files.read" => self.files(decode(args)?, FilesAccess::Read, asker),
+            "files.list" => self.files(decode(args)?, FilesAccess::List, asker),
+            "files.root" => self.files_root(decode(args)?, asker),
+            "exec.run" => self.exec(decode(args)?, deadline, asker),
             "storage.put" => {
                 let Put { data, blobs, key } = decode(args)?;
                 if let Some(key) = &key
@@ -232,9 +241,9 @@ impl Session {
                     return Err(Failure::invalid(format!("a key is 1–{MAX_KEY_BYTES} bytes")));
                 }
                 let record = new_record(data, blobs, |token| self.clip(token))?;
-                let (permit, namespace) = self.storage(StorageOp::Write)?;
+                let (permit, namespace) = self.storage(StorageOp::Write, asker)?;
                 // A write is an effect, so the permit is checked again just before it.
-                self.release(&permit, cancelled)?;
+                self.release(&permit, asker)?;
                 let record = namespace.with(|store| match &key {
                     Some(key) => store.upsert_within_limits(key, record),
                     None => store.put_within_limits(record),
@@ -244,18 +253,18 @@ impl Session {
             "storage.get" => {
                 let Id { id } = decode(args)?;
                 let id = record_id(&id)?;
-                let (permit, namespace) = self.storage(StorageOp::Read)?;
+                let (permit, namespace) = self.storage(StorageOp::Read, asker)?;
                 let record = namespace.with(|store| store.get(&id))?;
-                self.release(&permit, cancelled)?;
+                self.release(&permit, asker)?;
                 Ok(record.map_or(Value::Null, record_json))
             }
             "storage.list" => {
                 let ListArgs { before, limit } = decode(args)?;
                 let before = before.as_deref().map(cursor).transpose()?;
                 let limit = limit.map_or(DEFAULT_PAGE, |limit| (limit as usize).clamp(1, MAX_PAGE));
-                let (permit, namespace) = self.storage(StorageOp::Read)?;
+                let (permit, namespace) = self.storage(StorageOp::Read, asker)?;
                 let page = namespace.with(|store| store.list(before.as_ref(), limit))?;
-                self.release(&permit, cancelled)?;
+                self.release(&permit, asker)?;
                 Ok(page_json(page))
             }
             "storage.readBlob" => {
@@ -263,31 +272,31 @@ impl Session {
                 let handle: dupin_storage::BlobHandle = handle
                     .parse()
                     .map_err(|_| Failure::invalid("not a blob handle"))?;
-                let (permit, namespace) = self.storage(StorageOp::Read)?;
+                let (permit, namespace) = self.storage(StorageOp::Read, asker)?;
                 let bytes = namespace.with(|store| store.read_blob(&handle))?;
-                self.release(&permit, cancelled)?;
+                self.release(&permit, asker)?;
                 Ok(json!({ "data": BASE64.encode(&*bytes) }))
             }
             "storage.delete" => {
                 let Id { id } = decode(args)?;
                 let id = record_id(&id)?;
-                let (permit, namespace) = self.storage(StorageOp::Delete)?;
-                self.release(&permit, cancelled)?;
+                let (permit, namespace) = self.storage(StorageOp::Delete, asker)?;
+                self.release(&permit, asker)?;
                 let deleted = namespace.with(|store| store.delete(&id))?;
                 Ok(json!({ "deleted": deleted }))
             }
             "storage.clear" => {
                 let Nothing {} = decode(args)?;
-                let (permit, namespace) = self.storage(StorageOp::Delete)?;
-                self.release(&permit, cancelled)?;
+                let (permit, namespace) = self.storage(StorageOp::Delete, asker)?;
+                self.release(&permit, asker)?;
                 namespace.with(dupin_storage::Store::clear)?;
                 Ok(Value::Null)
             }
             "storage.usage" => {
                 let Nothing {} = decode(args)?;
-                let (permit, namespace) = self.storage(StorageOp::Read)?;
+                let (permit, namespace) = self.storage(StorageOp::Read, asker)?;
                 let usage = namespace.with(|store| Ok(store.usage()))?;
-                self.release(&permit, cancelled)?;
+                self.release(&permit, asker)?;
                 let limits = storage_limits(&permit)?;
                 Ok(json!({
                     "entries": usage.entries,
@@ -298,14 +307,14 @@ impl Session {
             }
             "clipboard.read" => {
                 let Nothing {} = decode(args)?;
-                let permit = self.permit(&Request::Clipboard(ClipboardAccess::Read))?;
+                let permit = self.permit(&Request::Clipboard(ClipboardAccess::Read), asker)?;
                 let clip = self.bridge.services.clipboard.read()?;
-                self.release(&permit, cancelled)?;
+                self.release(&permit, asker)?;
                 Ok(clip.unwrap_or(Value::Null))
             }
             "clipboard.write" => {
                 let write: ClipWrite = decode(args)?;
-                self.write_clipboard(write, cancelled)?;
+                self.write_clipboard(write, asker)?;
                 Ok(Value::Null)
             }
             "dictionary.lookup" => {
@@ -319,9 +328,9 @@ impl Session {
                         "a word is 1–{MAX_WORD_CHARS} characters without control characters"
                     )));
                 }
-                let permit = self.permit(&Request::DictionaryLookup)?;
+                let permit = self.permit(&Request::DictionaryLookup, asker)?;
                 let entries = self.bridge.services.dictionary.lookup(word)?;
-                self.release(&permit, cancelled)?;
+                self.release(&permit, asker)?;
                 Ok(json!({ "entries": entries }))
             }
             "calculator.evaluate" => {
@@ -334,9 +343,13 @@ impl Session {
                         "an expression is 1–{MAX_EXPRESSION_BYTES} bytes on one line"
                     )));
                 }
-                let permit = self.permit(&Request::CalculatorEvaluate)?;
-                let answer = self.bridge.services.calculator.evaluate(&expression, cancelled)?;
-                self.release(&permit, cancelled)?;
+                let permit = self.permit(&Request::CalculatorEvaluate, asker)?;
+                let answer = self
+                    .bridge
+                    .services
+                    .calculator
+                    .evaluate(&expression, asker.ended)?;
+                self.release(&permit, asker)?;
                 Ok(answer)
             }
             "snippets.save" => {
@@ -358,9 +371,9 @@ impl Session {
                     "replaces",
                     MAX_SNIPPET_FIELD_BYTES,
                 )?;
-                let permit = self.permit(&Request::SnippetsWrite)?;
+                let permit = self.permit(&Request::SnippetsWrite, asker)?;
                 // Storing it is the effect, so the permit is checked again just before it.
-                self.release(&permit, cancelled)?;
+                self.release(&permit, asker)?;
                 self.bridge.services.snippets.save(
                     crate::services::SnippetDraft { keyword, name, text },
                     replaces.as_deref(),
@@ -369,8 +382,8 @@ impl Session {
             "snippets.delete" => {
                 let Keyword { keyword } = decode(args)?;
                 bounded(&keyword, "keyword", MAX_SNIPPET_FIELD_BYTES)?;
-                let permit = self.permit(&Request::SnippetsWrite)?;
-                self.release(&permit, cancelled)?;
+                let permit = self.permit(&Request::SnippetsWrite, asker)?;
+                self.release(&permit, asker)?;
                 let deleted = self.bridge.services.snippets.delete(&keyword)?;
                 Ok(json!({ "deleted": deleted }))
             }
@@ -398,10 +411,13 @@ impl Session {
                 }
                 let calendar = &self.bridge.services.calendar;
                 let (past_days, future_days) = calendar.window(from, to)?;
-                let permit = self.permit(&Request::CalendarRead {
-                    past_days,
-                    future_days,
-                })?;
+                let permit = self.permit(
+                    &Request::CalendarRead {
+                        past_days,
+                        future_days,
+                    },
+                    asker,
+                )?;
                 let limit = limit.map_or(MAX_EVENTS, |limit| (limit as usize).min(MAX_EVENTS));
                 let events = calendar.events(
                     from,
@@ -411,29 +427,29 @@ impl Session {
                     order.unwrap_or_default(),
                     permit.scope(),
                 )?;
-                self.release(&permit, cancelled)?;
+                self.release(&permit, asker)?;
                 self.issue_links(&events);
                 Ok(json!({ "events": events }))
             }
             "windows.displays" => {
                 let Nothing {} = decode(args)?;
-                let permit = self.permit(&Request::Windows(WindowsAccess::Read))?;
+                let permit = self.permit(&Request::Windows(WindowsAccess::Read), asker)?;
                 let displays = self.bridge.services.windows.displays()?;
-                self.release(&permit, cancelled)?;
+                self.release(&permit, asker)?;
                 Ok(json!({ "displays": displays }))
             }
             "windows.focused" => {
                 let Nothing {} = decode(args)?;
-                let permit = self.permit(&Request::Windows(WindowsAccess::Read))?;
+                let permit = self.permit(&Request::Windows(WindowsAccess::Read), asker)?;
                 let window = self.bridge.services.windows.focused()?;
-                self.release(&permit, cancelled)?;
+                self.release(&permit, asker)?;
                 Ok(json!({ "window": window }))
             }
             "windows.setFrame" => {
                 let FrameArgs { x, y, width, height } = decode(args)?;
-                let permit = self.permit(&Request::Windows(WindowsAccess::Arrange))?;
+                let permit = self.permit(&Request::Windows(WindowsAccess::Arrange), asker)?;
                 // Moving the window is the effect, so the permit is checked again just before it.
-                self.release(&permit, cancelled)?;
+                self.release(&permit, asker)?;
                 let frame = self
                     .bridge
                     .services
@@ -443,16 +459,16 @@ impl Session {
             }
             "context.frontmost" => {
                 let Nothing {} = decode(args)?;
-                let permit = self.permit(&Request::Context(ContextAccess::Frontmost))?;
+                let permit = self.permit(&Request::Context(ContextAccess::Frontmost), asker)?;
                 let app = self.bridge.services.context.frontmost()?;
-                self.release(&permit, cancelled)?;
+                self.release(&permit, asker)?;
                 Ok(json!({ "app": app }))
             }
             "context.document" => {
                 let Nothing {} = decode(args)?;
-                let permit = self.permit(&Request::Context(ContextAccess::Document))?;
+                let permit = self.permit(&Request::Context(ContextAccess::Document), asker)?;
                 let document = self.bridge.services.context.document()?;
-                self.release(&permit, cancelled)?;
+                self.release(&permit, asker)?;
                 Ok(json!({ "document": document }))
             }
             _ => Err(Failure::new(
@@ -465,7 +481,7 @@ impl Session {
         }
     }
 
-    fn write_clipboard(&self, write: ClipWrite, cancelled: &AtomicBool) -> Result<(), Failure> {
+    fn write_clipboard(&self, write: ClipWrite, asker: Asker<'_>) -> Result<(), Failure> {
         let clipboard = &self.bridge.services.clipboard;
         let shape = |kind: &str| {
             Failure::invalid(format!(
@@ -478,29 +494,29 @@ impl Session {
                 if text.is_empty() {
                     return Err(Failure::invalid("the text is empty"));
                 }
-                let permit = self.permit(&Request::Clipboard(ClipboardAccess::Write))?;
-                self.release(&permit, cancelled)?;
+                let permit = self.permit(&Request::Clipboard(ClipboardAccess::Write), asker)?;
+                self.release(&permit, asker)?;
                 clipboard.write_text(&text)
             }
             (Some("image"), None, Some(blob), None) => {
-                let permit = self.permit(&Request::Clipboard(ClipboardAccess::Write))?;
+                let permit = self.permit(&Request::Clipboard(ClipboardAccess::Write), asker)?;
                 let handle: dupin_storage::BlobHandle = blob
                     .parse()
                     .map_err(|_| Failure::invalid("`blob` is a stored blob's handle"))?;
-                let (read, namespace) = self.storage(StorageOp::Read)?;
+                let (read, namespace) = self.storage(StorageOp::Read, asker)?;
                 let png = namespace.with(|store| store.read_blob(&handle))?;
                 let png =
                     dupin_host_services::clipboard::Write::image(png.to_vec()).map_err(Failure::from)?;
-                self.release(&read, cancelled)?;
-                self.release(&permit, cancelled)?;
+                self.release(&read, asker)?;
+                self.release(&permit, asker)?;
                 let dupin_host_services::clipboard::Write::Image(png) = png else {
                     unreachable!("`Write::image` makes an image");
                 };
                 clipboard.write_image(&png)
             }
             (Some("files"), None, None, Some(files)) => {
-                let permit = self.permit(&Request::Clipboard(ClipboardAccess::Write))?;
-                let (read, namespace) = self.storage(StorageOp::Read)?;
+                let permit = self.permit(&Request::Clipboard(ClipboardAccess::Write), asker)?;
+                let (read, namespace) = self.storage(StorageOp::Read, asker)?;
                 let paths = files
                     .iter()
                     .map(|file| {
@@ -516,8 +532,8 @@ impl Session {
                     .collect::<Result<Vec<_>, _>>()?;
                 let write =
                     dupin_host_services::clipboard::Write::copied_files(paths).map_err(Failure::from)?;
-                self.release(&read, cancelled)?;
-                self.release(&permit, cancelled)?;
+                self.release(&read, asker)?;
+                self.release(&permit, asker)?;
                 let dupin_host_services::clipboard::Write::CopiedFiles(paths) = write else {
                     unreachable!("`Write::copied_files` makes files");
                 };
@@ -604,7 +620,7 @@ impl Session {
                     .parse()
                     .map_err(|_| Failure::invalid("not a blob handle"))?;
                 let bytes = namespace.with(|store| store.read_blob(&handle))?;
-                self.release(&permit, &AtomicBool::new(false))?;
+                self.release(&permit, Asker::dupin())?;
                 read(crate::ImageData::Bytes(&bytes))
             }
             crate::ImageRef::File { path, handle } => {
@@ -615,14 +631,14 @@ impl Session {
                         "only files a clipboard watch delivered, with their handles, can be drawn",
                     ));
                 }
-                self.release(&permit, &AtomicBool::new(false))?;
+                self.release(&permit, Asker::dupin())?;
                 read(crate::ImageData::File(std::path::Path::new(path)))
             }
         };
         Ok(result)
     }
 
-    fn fetch(&self, args: Fetch, deadline: Instant, cancelled: &AtomicBool) -> Result<Value, Failure> {
+    fn fetch(&self, args: Fetch, deadline: Instant, asker: Asker<'_>) -> Result<Value, Failure> {
         bounded(&args.url, "url", MAX_URL_BYTES)?;
         let method = match args.method.to_ascii_uppercase().as_str() {
             "GET" => (Method::Get, http::Method::Get),
@@ -654,10 +670,13 @@ impl Session {
         if let Some(body) = &args.body {
             bounded(body, "body", MAX_BODY_BYTES)?;
         }
-        let permit = self.permit(&Request::Http {
-            url: args.url.clone(),
-            method: method.0,
-        })?;
+        let permit = self.permit(
+            &Request::Http {
+                url: args.url.clone(),
+                method: method.0,
+            },
+            asker,
+        )?;
         let Scope::Http { origin, methods } = permit.scope() else {
             return Err(Failure::new("failed", "the permit doesn't name an origin"));
         };
@@ -674,11 +693,11 @@ impl Session {
             body: args.body.map(String::into_bytes),
         };
         let cancel = http::CancelToken::new();
-        let response = with_cancel(&cancel, deadline, cancelled, || {
+        let response = with_cancel(&cancel, deadline, asker.ended, || {
             self.bridge.services.http.fetch(request, &scope, &cancel)
         })
         .map_err(|error| Failure::new(error.code(), error.to_string()))?;
-        self.release(&permit, cancelled)?;
+        self.release(&permit, asker)?;
         let truncated = response.body.len() > MAX_RESPONSE_BYTES;
         let mut body = response.body;
         body.truncate(MAX_RESPONSE_BYTES);
@@ -694,14 +713,40 @@ impl Session {
         }))
     }
 
-    fn files(&self, args: FilesArgs, access: FilesAccess) -> Result<Value, Failure> {
+    /// A `not-found` failure for a scope the user hasn't decided on whose declared folder
+    /// doesn't exist, so a package that names several likely folders, such as `~/src` and
+    /// `~/Developer`, asks only about those the user has.
+    fn missing_declared(&self, name: &ScopeName) -> Result<(), Failure> {
+        let key = ScopeKey::Files(name.clone());
+        let declared = self
+            .bridge
+            .lock()
+            .broker
+            .consents(&self.package)
+            .into_iter()
+            .find(|(scope, state)| scope.key() == key && *state == ConsentState::Undecided)
+            .and_then(|(scope, _)| scope.declared_path().cloned());
+        let (Some(declared), Some(home)) = (declared, self.bridge.home()) else {
+            return Ok(());
+        };
+        if declared.resolve(&home).symlink_metadata().is_err() {
+            return Err(Failure::new("not-found", format!("{declared} doesn't exist")));
+        }
+        Ok(())
+    }
+
+    fn files(&self, args: FilesArgs, access: FilesAccess, asker: Asker<'_>) -> Result<Value, Failure> {
         let name = scope_name(&args.scope)?;
         bounded(&args.path, "path", 4096)?;
-        let permit = self.permit(&Request::Files {
-            scope: name.clone(),
-            access,
-            path: args.path.clone(),
-        })?;
+        self.missing_declared(&name)?;
+        let permit = self.permit(
+            &Request::Files {
+                scope: name.clone(),
+                access,
+                path: args.path.clone(),
+            },
+            asker,
+        )?;
         let (Scope::Files { kind, .. }, Some(binding)) = (permit.scope(), permit.binding()) else {
             return Err(Failure::new(
                 "failed",
@@ -772,11 +817,58 @@ impl Session {
                 json!({ "entries": entries, "truncated": listing.truncated })
             }
         };
-        self.release(&permit, &AtomicBool::new(false))?;
+        self.release(&permit, asker)?;
         Ok(value)
     }
 
-    fn exec(&self, args: ExecArgs, cancelled: &AtomicBool) -> Result<Value, Failure> {
+    /// The absolute path the scope is bound to, so the package can name what it lists to
+    /// Dupin's own actions and to its programs. It reveals no more than the scope's own grant,
+    /// under whichever access the scope declares.
+    fn files_root(&self, args: RootArgs, asker: Asker<'_>) -> Result<Value, Failure> {
+        let name = scope_name(&args.scope)?;
+        self.missing_declared(&name)?;
+        let key = ScopeKey::Files(name.clone());
+        let access = self
+            .bridge
+            .lock()
+            .broker
+            .consents(&self.package)
+            .into_iter()
+            .find_map(|(scope, _)| match scope {
+                Scope::Files { access, .. } if scope.key() == key => access.first().copied(),
+                _ => None,
+            })
+            .unwrap_or(FilesAccess::Read);
+        let permit = self.permit(
+            &Request::Files {
+                scope: name,
+                access,
+                path: String::new(),
+            },
+            asker,
+        )?;
+        let binding = permit
+            .binding()
+            .ok_or_else(|| Failure::new("failed", "the permit doesn't name a file or folder"))?;
+        let shown = self
+            .bridge
+            .shown_roots
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(binding)
+            .cloned();
+        let path = match shown {
+            Some(shown) => shown,
+            None => binding
+                .to_str()
+                .ok_or_else(|| Failure::new("failed", "the bound path isn't UTF-8"))?
+                .to_owned(),
+        };
+        self.release(&permit, asker)?;
+        Ok(json!({ "path": path }))
+    }
+
+    fn exec(&self, args: ExecArgs, deadline: Instant, asker: Asker<'_>) -> Result<Value, Failure> {
         if args.inputs.len() > MAX_INPUTS {
             return Err(Failure::invalid(format!("at most {MAX_INPUTS} inputs")));
         }
@@ -812,14 +904,26 @@ impl Session {
                 false,
             ),
         };
-        let permit = self.permit(&request)?;
-        let profile = profile(&permit, script)?;
-        self.release(&permit, cancelled)?;
+        let permit = self.permit(&request, asker)?;
+        // A command never outlives the call that ran it, so one that takes too long times out
+        // and the call carries on, rather than the call failing at its deadline.
+        let timeout = deadline
+            .saturating_duration_since(Instant::now())
+            .saturating_sub(EXEC_MARGIN)
+            .min(exec::DEFAULT_TIMEOUT);
+        if timeout.is_zero() {
+            return Err(Failure::new(
+                "timeout",
+                "the call has no time left to run a command",
+            ));
+        }
+        let profile = profile(&permit, script, timeout)?;
+        self.release(&permit, asker)?;
         let outcome = self
             .bridge
             .services
             .exec
-            .run(&profile, &values, cancelled)
+            .run(&profile, &values, asker.ended)
             .map_err(|error| match error {
                 exec::ExecError::InvalidInput { .. }
                 | exec::ExecError::UnknownInput(_)
@@ -827,7 +931,7 @@ impl Session {
                 exec::ExecError::Unavailable(_) => Failure::new("unavailable", error.to_string()),
                 exec::ExecError::Failed(_) => Failure::new("failed", error.to_string()),
             })?;
-        self.release(&permit, cancelled)?;
+        self.release(&permit, asker)?;
         let (code, signal, timed_out) = match outcome.exit {
             exec::Exit::Code(code) => (Some(code), false, false),
             exec::Exit::Signal => (None, true, false),
@@ -844,8 +948,8 @@ impl Session {
     }
 
     /// The package's own namespace, open with the quota and retention the permit names.
-    fn storage(&self, op: StorageOp) -> Result<(Permit, Arc<storage::Namespace>), Failure> {
-        let permit = self.permit(&Request::Storage { op })?;
+    fn storage(&self, op: StorageOp, asker: Asker<'_>) -> Result<(Permit, Arc<storage::Namespace>), Failure> {
+        let permit = self.permit(&Request::Storage { op }, asker)?;
         let store = self.open_namespace(&permit)?;
         Ok((permit, store))
     }
@@ -867,9 +971,14 @@ impl Session {
     }
 
     /// Asks the broker for `request` under this call's trigger.
-    pub(crate) fn permit(&self, request: &Request) -> Result<Permit, Failure> {
+    pub(crate) fn permit(&self, request: &Request, asker: Asker<'_>) -> Result<Permit, Failure> {
         self.bridge.sync();
         let mut state = self.bridge.lock();
+        // Read under the lock its run's end takes, so a request that outlives its call asks
+        // nothing once that end has withdrawn what the run asked.
+        if asker.ended.load(Ordering::Relaxed) {
+            return Err(call_ended());
+        }
         if state.broker.generation(&self.package) != Some(self.generation) {
             return Err(revoked());
         }
@@ -879,17 +988,21 @@ impl Session {
         {
             dupin_broker::Decision::Allow(permit) => Ok(permit),
             dupin_broker::Decision::Deny(denial) => {
-                if denial == dupin_broker::Denial::Disabled
-                    && state.asked_while_off.insert(self.package.clone())
-                {
-                    drop(state);
-                    self.bridge
-                        .notify(crate::Notice::ConsentNeeded(self.package.clone()));
+                if denial == dupin_broker::Denial::Disabled {
+                    let up = !state.asked_while_off.insert(self.package.clone());
+                    state.asked(&self.package, Ask::TurnOn, up, asker.request);
+                    if !up {
+                        drop(state);
+                        self.bridge
+                            .notify(crate::Notice::ConsentNeeded(self.package.clone()));
+                    }
                 }
                 Err(failure_for(&denial))
             }
             dupin_broker::Decision::NeedsConsent(needed) => {
-                let failure = self.bridge.needs_consent(&mut state, &self.package, needed);
+                let failure = self
+                    .bridge
+                    .needs_consent(&mut state, &self.package, needed, asker.request);
                 drop(state);
                 self.bridge
                     .notify(crate::Notice::ConsentNeeded(self.package.clone()));
@@ -900,15 +1013,12 @@ impl Session {
 
     /// Checks the permit again before a result is released or an effect performed, so a
     /// revocation during the operation drops what it produced.
-    fn release(&self, permit: &Permit, cancelled: &AtomicBool) -> Result<(), Failure> {
-        if cancelled.load(Ordering::Relaxed) {
-            return Err(Failure::new(
-                "cancelled",
-                "the call ended before the request finished",
-            ));
-        }
+    fn release(&self, permit: &Permit, asker: Asker<'_>) -> Result<(), Failure> {
         self.bridge.sync();
         let state = self.bridge.lock();
+        if asker.ended.load(Ordering::Relaxed) {
+            return Err(call_ended());
+        }
         if permit.generation() != self.generation || !state.broker.validate(permit) {
             return Err(revoked());
         }
@@ -1034,6 +1144,10 @@ fn page_json(page: dupin_storage::Page) -> Value {
     })
 }
 
+fn call_ended() -> Failure {
+    Failure::new("cancelled", "the call ended before the request finished")
+}
+
 fn revoked() -> Failure {
     Failure::new(
         "revoked",
@@ -1053,7 +1167,7 @@ fn file_failure(error: files::FileError) -> Failure {
 
 /// The profile the permit approves. Its placeholders become required one-line text inputs; a
 /// script target takes none.
-fn profile(permit: &Permit, script: bool) -> Result<exec::Profile, Failure> {
+fn profile(permit: &Permit, script: bool, timeout: Duration) -> Result<exec::Profile, Failure> {
     let unavailable = |error: exec::ExecError| Failure::new("unavailable", error.to_string());
     match permit.scope() {
         Scope::Script { name, output } if script => exec::Profile::new(
@@ -1063,46 +1177,72 @@ fn profile(permit: &Permit, script: bool) -> Result<exec::Profile, Failure> {
             BTreeMap::new(),
             exec::Options {
                 return_output: *output,
+                timeout,
                 ..exec::Options::default()
             },
         )
         .map_err(unavailable),
-        Scope::Exec { name, args, output } if !script => {
+        scope @ Scope::Exec { .. } if !script => {
             let binding = permit
                 .binding()
                 .ok_or_else(|| Failure::new("failed", "no program was picked for the profile"))?;
-            let inputs = args
-                .iter()
-                .filter_map(|arg| placeholder(arg))
-                .map(|name| {
-                    (
-                        name,
-                        exec::Input {
-                            kind: exec::InputKind::Text {
-                                max_bytes: MAX_INPUT_BYTES,
-                                multiline: false,
-                                option_like: false,
-                            },
-                            required: true,
-                        },
-                    )
-                })
-                .collect();
-            let template: Vec<&str> = args.iter().map(String::as_str).collect();
-            exec::Profile::new(
-                name.as_str(),
-                exec::Target::Executable(binding.to_path_buf()),
-                &template,
-                inputs,
-                exec::Options {
-                    return_output: *output,
-                    ..exec::Options::default()
-                },
-            )
-            .map_err(unavailable)
+            timed_profile(scope, binding, timeout).map_err(unavailable)
         }
         _ => Err(Failure::new("failed", "the permit doesn't name a program")),
     }
+}
+
+/// The profile an `exec` scope declares, run with the program picked for it. Its placeholders
+/// become required one-line text inputs.
+fn timed_profile(
+    scope: &Scope,
+    program: &std::path::Path,
+    timeout: Duration,
+) -> Result<exec::Profile, exec::ExecError> {
+    let Scope::Exec {
+        name,
+        args,
+        output,
+        ssh_agent,
+        output_bytes,
+        ..
+    } = scope
+    else {
+        return Err(exec::ExecError::InvalidProfile(
+            "the scope doesn't run a program".into(),
+        ));
+    };
+    let inputs = args
+        .iter()
+        .filter_map(|arg| placeholder(arg))
+        .map(|name| {
+            (
+                name,
+                exec::Input {
+                    kind: exec::InputKind::Text {
+                        max_bytes: MAX_INPUT_BYTES,
+                        multiline: false,
+                        option_like: false,
+                    },
+                    required: true,
+                },
+            )
+        })
+        .collect();
+    let template: Vec<&str> = args.iter().map(String::as_str).collect();
+    exec::Profile::new(
+        name.as_str(),
+        exec::Target::Executable(program.to_path_buf()),
+        &template,
+        inputs,
+        exec::Options {
+            return_output: *output,
+            ssh_agent: *ssh_agent,
+            timeout,
+            output_bytes: output_bytes.map_or(exec::DEFAULT_OUTPUT_BYTES, |bytes| bytes as usize),
+            ..exec::Options::default()
+        },
+    )
 }
 
 /// The input an argument template element names, as in `--count={count}`.

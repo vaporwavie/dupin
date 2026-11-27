@@ -33,6 +33,9 @@ use super::super::Extension;
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 /// Under the scratch folder; the dot keeps it apart from every `files` scope's name.
 const STORAGE_DIR: &str = ".storage";
+/// The home folder a fixture's `files` scope declared under `~/` reports as its root, wherever
+/// the scratch folder holding it is.
+const FIXTURE_HOME: &str = "/Users/dupin";
 /// Bound to every executable profile; the fixture's exec service never runs it.
 const UNRUN_PROGRAM: &str = "/usr/bin/false";
 
@@ -104,6 +107,9 @@ impl Fixture {
             None,
             replier.services(),
         );
+        // Nothing exists here, so a declared folder the fixture leaves undecided is missing on
+        // every Mac alike.
+        bridge.set_home(Some(replier.scratch.path().join("home")));
         bridge.install(
             &extension.package,
             extension.revision.clone(),
@@ -281,8 +287,8 @@ impl Replier {
                 continue;
             }
             let binding = match &entry.scope {
-                Scope::Files { name, kind, .. } => Some(
-                    materialize(
+                Scope::Files { name, kind, path, .. } => {
+                    let binding = materialize(
                         scratch.path(),
                         name.as_str(),
                         *kind,
@@ -294,8 +300,14 @@ impl Replier {
                             format!("couldn't write the fixture's files: {error}"),
                         )
                         .file(name.as_str().to_owned())
-                    })?,
-                ),
+                    })?;
+                    let shown = match path {
+                        Some(path) => path.resolve(Path::new(FIXTURE_HOME)).display().to_string(),
+                        None => format!("/fixture/{name}"),
+                    };
+                    bridge.show_root_as(binding.clone(), shown);
+                    Some(binding)
+                }
                 scope if scope.needs_binding() => Some(PathBuf::from(UNRUN_PROGRAM)),
                 _ => None,
             };
@@ -352,6 +364,35 @@ pub(in crate::extensions) struct HeadlessFixture {
     pub events: Vec<(usize, f64)>,
 }
 
+/// What a headless run that nobody handed a fixture finds in its extensions folder, such as a
+/// latency scenario's: `{ "name": <bundled package name>, "fixture": <file in that folder> }`.
+/// A file whose name starts with a dot is no extension, so the folder loads nothing else.
+const PLACED_FIXTURE: &str = ".headless-fixture.json";
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Placed {
+    name: String,
+    fixture: PathBuf,
+}
+
+/// The fixture placed in the extensions folder, for the bundled package it names at the
+/// revision this build ships.
+fn placed() -> Option<HeadlessFixture> {
+    let folder = super::super::directory()?;
+    let placed: Placed = serde_json::from_str(&std::fs::read_to_string(folder.join(PLACED_FIXTURE)).ok()?)
+        .inspect_err(|error| crate::log::warn(&format!("{PLACED_FIXTURE}: {error}")))
+        .ok()?;
+    let package = super::super::bundled::find(&super::super::bundled::directory()?, &placed.name)?;
+    let (_, revision, _) = super::super::declaration_of(&package).ok()?;
+    Some(HeadlessFixture {
+        fixture: folder.join(placed.fixture),
+        name: placed.name,
+        revision: revision.as_str().to_owned(),
+        events: Vec::new(),
+    })
+}
+
 /// The fixture a headless launcher renders: its replies answer every host request, and its
 /// consent and preferences are the replayed package's once the launcher installs it.
 pub(in crate::extensions) struct Headless {
@@ -378,8 +419,10 @@ pub(in crate::extensions) fn headless() -> Option<&'static Headless> {
     }
     HEADLESS
         .get_or_init(|| {
-            let handed: HeadlessFixture =
-                serde_json::from_str(&std::env::var(HEADLESS_FIXTURE).ok()?).ok()?;
+            let handed: HeadlessFixture = match std::env::var(HEADLESS_FIXTURE) {
+                Ok(handed) => serde_json::from_str(&handed).ok()?,
+                Err(_) => placed()?,
+            };
             Headless::open(handed)
                 .inspect_err(|diagnostic| crate::log::warn(&format!("render fixture: {diagnostic}")))
                 .ok()

@@ -449,6 +449,8 @@ pub(crate) mod fixture {
     pub(crate) struct Exec {
         pub(crate) stdout: String,
         pub(crate) runs: Mutex<Vec<(String, BTreeMap<String, exec::Value>)>>,
+        /// The program and the timeout of each run, in the same order.
+        pub(crate) launches: Mutex<Vec<(exec::Target, std::time::Duration)>>,
     }
 
     impl super::Exec for Arc<Exec> {
@@ -463,6 +465,10 @@ pub(crate) mod fixture {
                 .lock()
                 .unwrap()
                 .push((profile.name().into(), values.clone()));
+            self.launches
+                .lock()
+                .unwrap()
+                .push((profile.target().clone(), profile.options().timeout));
             Ok(exec::Outcome {
                 exit: exec::Exit::Code(0),
                 output: profile.options().return_output.then(|| exec::Output {
